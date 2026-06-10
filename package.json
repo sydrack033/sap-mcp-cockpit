@@ -1,0 +1,37 @@
+{
+  "name": "sap-mcp-cockpit",
+  "version": "1.0.0",
+  "description": "SAP MCP Cockpit - painel grafico que liga seu assistente de IA (Claude Code / Codex) ao SAP via MCP. Cadastra clientes/ambientes (Cloud SSO ou On-Premise basic auth), gera .vsp.json / .mcp.json / config do Codex / .env e abre o projeto no VSCode. Hoje usa o vsp como motor.",
+  "main": "main.js",
+  "scripts": {
+    "start": "node start.js",
+    "dist": "electron-builder --win portable"
+  },
+  "author": "Sydrack",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.sydrack.sapmcpcockpit",
+    "productName": "SAP MCP Cockpit",
+    "directories": {
+      "output": "../../sap-mcp-cockpit-dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "start.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "SAPMCPCockpit-${version}-portable.exe"
+    }
+  }
+}

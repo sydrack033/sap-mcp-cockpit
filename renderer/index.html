@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAP MCP Cockpit</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="gear">⚙</span>
+      <div>
+        <h1>SAP MCP Cockpit</h1>
+        <p class="sub" data-i18n="sub">SAP environments &middot; vsp &middot; Claude Code / Codex</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="lang-flags">
+        <button class="flag" data-lang="en" title="English" aria-label="English">
+          <svg viewBox="0 0 28 20" width="26" height="18">
+            <rect width="28" height="20" fill="#b22234"/>
+            <g fill="#fff">
+              <rect y="1.54" width="28" height="1.54"/><rect y="4.62" width="28" height="1.54"/>
+              <rect y="7.69" width="28" height="1.54"/><rect y="10.77" width="28" height="1.54"/>
+              <rect y="13.85" width="28" height="1.54"/><rect y="16.92" width="28" height="1.54"/>
+            </g>
+            <rect width="12" height="10.77" fill="#3c3b6e"/>
+          </svg>
+        </button>
+        <button class="flag" data-lang="pt" title="Português (Brasil)" aria-label="Português (Brasil)">
+          <svg viewBox="0 0 28 20" width="26" height="18">
+            <rect width="28" height="20" fill="#009b3a"/>
+            <polygon points="14,2.5 25.5,10 14,17.5 2.5,10" fill="#fedf00"/>
+            <circle cx="14" cy="10" r="4" fill="#002776"/>
+          </svg>
+        </button>
+      </div>
+      <button id="btn-generate" class="btn btn-primary"
+        data-i18n="btn.generate" data-i18n-title="btn.generate.title">Generate configs</button>
+      <button id="btn-vscode" class="btn"
+        data-i18n="btn.vscode" data-i18n-title="btn.vscode.title">Open in VSCode</button>
+      <button id="btn-folder" class="btn btn-ghost"
+        data-i18n="btn.folder" data-i18n-title="btn.folder.title">Open folder</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Configuracoes globais -->
+    <section class="panel">
+      <div class="panel-head" data-toggle="settings-body">
+        <h2 data-i18n="settings.title">Settings</h2>
+        <span class="chev">▾</span>
+      </div>
+      <div class="panel-body" id="settings-body">
+        <div class="field">
+          <label data-i18n="settings.vsp">Path to vsp.exe</label>
+          <div class="row">
+            <input id="set-vsp" type="text" placeholder="C:/.../tools/vsp.exe" />
+            <button class="btn btn-sm" data-pick="vsp" data-i18n="browse">Browse…</button>
+          </div>
+        </div>
+        <div class="field">
+          <label data-i18n="settings.project">Project folder (single workspace)</label>
+          <div class="row">
+            <input id="set-project" type="text" data-i18n-ph="settings.project.ph" placeholder="e.g.: C:/Users/YourUser/Projects/sap-workspace" />
+            <button class="btn btn-sm" data-pick="project" data-i18n="browse">Browse…</button>
+          </div>
+          <p class="hint" data-i18n-html="settings.project.hint">Folder where the config files will be generated. Use <b>Browse…</b> or type the path.</p>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label data-i18n="settings.chrome">Chrome path (browser-auth)</label>
+            <div class="row">
+              <input id="set-chrome" type="text" placeholder="C:/Program Files/Google/Chrome/Application/chrome.exe" />
+              <button class="btn btn-sm" data-pick="chrome" data-i18n="browse">Browse…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label data-i18n="settings.vscode">VSCode command</label>
+            <input id="set-vscode" type="text" placeholder="code" />
+            <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
+          </div>
+        </div>
+        <div class="row end">
+          <button id="btn-save-settings" class="btn btn-sm btn-primary"
+            data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ambientes -->
+    <section class="panel">
+      <div class="panel-head static">
+        <h2><span data-i18n="envs.title">Environments</span> <span id="env-count" class="pill">0</span></h2>
+        <button id="btn-new" class="btn btn-sm btn-primary" data-i18n="envs.new">+ New environment</button>
+      </div>
+      <div class="panel-body">
+        <div id="env-list" class="env-list"></div>
+        <p id="env-empty" class="empty" data-i18n-html="envs.empty">No environment registered yet. Click <b>+ New environment</b>.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Status / log -->
+  <footer class="statusbar">
+    <span id="status">Ready.</span>
+    <button id="btn-log" class="btn btn-ghost btn-sm" data-i18n="log.view">View log</button>
+  </footer>
+
+  <!-- Modal de cadastro/edicao -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modal-title" data-i18n="modal.new">New environment</h3>
+        <button id="modal-close" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid2">
+          <div class="field">
+            <label data-i18n="f.client">Client *</label>
+            <input id="f-client" type="text" placeholder="Acme" />
+          </div>
+          <div class="field">
+            <label data-i18n="f.env">Environment *</label>
+            <input id="f-env" type="text" placeholder="DEV / QAS / PRD" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label data-i18n="f.auth">Authentication type</label>
+          <div class="seg">
+            <label class="seg-opt">
+              <input type="radio" name="auth" value="onprem" checked />
+              <span data-i18n="auth.onprem">On-Premise (basic auth)</span>
+            </label>
+            <label class="seg-opt">
+              <input type="radio" name="auth" value="cloud" />
+              <span data-i18n="auth.cloud">Cloud (SSO SAML / cookie)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label data-i18n="f.url">URL *</label>
+            <input id="f-url" type="text" placeholder="https://myXXXXXX.s4hana.cloud.sap  ·  http://host:8000" />
+          </div>
+          <div class="field">
+            <label data-i18n="f.sapclient">SAP client *</label>
+            <input id="f-sapclient" type="text" placeholder="100" />
+          </div>
+        </div>
+
+        <!-- so onprem -->
+        <div id="onprem-fields" class="onprem hidden">
+          <div class="grid2">
+            <div class="field">
+              <label data-i18n="f.user">SAP user *</label>
+              <input id="f-user" type="text" placeholder="DEVUSER" />
+            </div>
+            <div class="field">
+              <label data-i18n="f.pass">Password</label>
+              <input id="f-pass" type="password" placeholder="••••••" />
+            </div>
+          </div>
+          <label class="check">
+            <input id="f-insecure" type="checkbox" />
+            <span data-i18n="f.insecure">Self-signed certificate server (--insecure)</span>
+          </label>
+          <p class="hint" data-i18n="f.insecure.hint">Most on-premise servers use a self-signed certificate — keep this on unless you know the cert is valid.</p>
+        </div>
+
+        <hr />
+
+        <div class="grid2">
+          <div class="field">
+            <label data-i18n="f.mode">Mode</label>
+            <select id="f-mode">
+              <option value="focused">focused (~100 tools)</option>
+              <option value="expert">expert (147 tools)</option>
+              <option value="hyperfocused">hyperfocused (1 tool)</option>
+            </select>
+            <p class="hint" data-i18n="f.mode.hint">focused cobre leitura/busca. Para criar/editar objeto (fluxo LockObject/UpdateSource), escolha expert.</p>
+          </div>
+          <div class="field">
+            <label data-i18n="f.lang">Language (optional)</label>
+            <input id="f-lang" type="text" placeholder="PT / EN" />
+          </div>
+        </div>
+
+        <div class="checks">
+          <label class="check">
+            <input id="f-readonly" type="checkbox" />
+            <span data-i18n="f.readonly">Read-only (blocks writes)</span>
+          </label>
+          <label class="check">
+            <input id="f-transp-edit" type="checkbox" />
+            <span data-i18n="f.transpedit">Allow transportable edits</span>
+          </label>
+          <label class="check">
+            <input id="f-transp" type="checkbox" />
+            <span data-i18n="f.transp">Enable transports</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="modal-cancel" class="btn btn-ghost" data-i18n="modal.cancel">Cancel</button>
+        <button id="modal-save" class="btn btn-primary" data-i18n="modal.save">Save environment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log viewer -->
+  <div id="logmodal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 data-i18n="log.title">Log</h3>
+        <button id="logmodal-close" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <pre id="logbox" class="logbox"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

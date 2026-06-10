@@ -1,0 +1,16 @@
+{
+  "// nota": "Impede o VS Code de vigiar/indexar a saida do build (dist/). Sem isso, o Code.exe mantem um handle no app.asar e o electron-builder falha com 'arquivo em uso por outro processo'.",
+  "files.watcherExclude": {
+    "**/dist/**": true,
+    "**/release/**": true
+  },
+  "search.exclude": {
+    "**/dist": true,
+    "**/release": true,
+    "**/node_modules": true
+  },
+  "files.exclude": {
+    "**/dist/win-unpacked": true,
+    "**/release/win-unpacked": true
+  }
+}
