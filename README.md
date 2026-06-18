@@ -6,6 +6,8 @@ Você cadastra **clientes e ambientes** (Cloud SSO ou On-Premise basic auth) e o
 
 Cada ambiente vira um MCP server nomeado `cliente-ambiente` (ex.: `mcp__acme-dev__*`).
 
+> 📖 **Primeira vez?** Siga o **[TUTORIAL.md](TUTORIAL.md)** — passo a passo do zero (baixar o app + o vsp, montar as pastas, cadastrar ambiente, gerar config e abrir no VSCode já conversando com o SAP).
+
 ---
 
 ## Pré-requisitos
@@ -55,15 +57,79 @@ Em modo MCP, o `vsp` **não aplica o `-s <profile>`** — ele exige `--url`/`--c
 
 `settings.json` e `clients.json` em `%APPDATA%/sap-mcp-cockpit/` (perfil do usuário). As senhas on-prem ficam aí e no `.env`/config gerados (texto plano, protegido pela ACL do seu usuário). *(Migração automática do nome antigo `steampunk-manager` é feita no primeiro start.)*
 
-## Compilar num .exe portable
+## Fluxo de desenvolvimento → build → release (pra quem mexe no código)
 
+Roteiro completo de **depois que você alterou o código** até publicar uma nova versão. Tudo em **PowerShell**, na raiz do projeto.
+
+> Confirme antes que o `gh` está na conta certa: `gh auth status`. Se não estiver: `gh auth switch --user sydrack033`.
+
+### 1. Testar a mudança no app
+```powershell
+npm start
+```
+> Mexeu só no `renderer/` (HTML/CSS/JS da tela)? Dá pra recarregar a janela aberta com **Ctrl+R** em vez de reiniciar. Mexeu no `main.js`/`preload.js`? Tem que fechar e `npm start` de novo.
+
+### 2. Subir o fonte numa branch nova
+```powershell
+# cria e já entra na branch nova (troque o nome)
+git checkout -b feature/minha-mudanca
+
+# commita tudo
+git add -A
+git commit -m "descreva a mudança aqui"
+
+# sobe a branch e cria o tracking
+git push -u origin feature/minha-mudanca
+```
+Depois, **abra o Pull Request** no GitHub e faça o merge na `main`. (Ou, se for direto, sem PR:)
+```powershell
+git checkout main
+git merge feature/minha-mudanca
+git push
+```
+
+### 3. Subir versão (gera commit + tag automático)
+Na `main`, já com tudo mergeado:
+```powershell
+git checkout main
+git pull
+
+# escolha um: patch (1.0.0->1.0.1) | minor (1.0.0->1.1.0) | major (1.0.0->2.0.0)
+npm version minor
+
+# sobe o commit de versão + a tag (ex.: v1.1.0)
+git push --follow-tags
+```
+> `npm version` atualiza o `package.json` e **cria a tag `vX.Y.Z`** sozinho.
+
+### 4. Gerar o `.exe` portátil (já com a versão nova)
 ```powershell
 npm run dist
 ```
+Gera `..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-<versão>-portable.exe` (roda com duplo-clique, sem Node). A saída fica **fora** da pasta do projeto de propósito (evita o VSCode travar o `.exe` durante o build).
+> Feche qualquer portátil do Cockpit aberto antes do build, senão dá erro de arquivo travado.
 
-Gera `..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-1.0.0-portable.exe` (roda com duplo-clique, sem Node). A saída fica **fora** da pasta do projeto de propósito (evita o VSCode travar o `.exe` durante o build).
+### 5. Publicar a Release no GitHub (com o `.exe` anexado)
+Troque a versão nos dois lugares (`v1.1.0` e o nome do arquivo):
+```powershell
+gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "O que mudou nesta versão." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-1.1.0-portable.exe"
+```
+Conferir:
+```powershell
+gh release view v1.1.0 --repo sydrack033/sap-mcp-cockpit
+```
+> Link fixo de download da última versão (pra divulgar): `https://github.com/sydrack033/sap-mcp-cockpit/releases/latest`
 
-> **Erro de symlink no `winCodeSign` durante o build?** O electron-builder baixa um pacote com symlinks de macOS que o Windows recusa sem Developer Mode/admin. Contorno: extrair o pacote no cache **sem a pasta `darwin`**:
+### Resumo (cola rápida)
+```powershell
+git checkout -b feature/x; git add -A; git commit -m "..."; git push -u origin feature/x
+# (merge na main pelo PR, depois:)
+git checkout main; git pull; npm version minor; git push --follow-tags
+npm run dist
+gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "..." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-1.1.0-portable.exe"
+```
+
+> **Erro de symlink no `winCodeSign` durante o `npm run dist`?** O electron-builder baixa um pacote com symlinks de macOS que o Windows recusa sem Developer Mode/admin. Contorno: extrair o pacote no cache **sem a pasta `darwin`**:
 > ```powershell
 > $cache = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
 > $7za = ".\node_modules\7zip-bin\win\x64\7za.exe"

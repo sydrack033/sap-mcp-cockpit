@@ -96,6 +96,7 @@ main {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+  flex-shrink: 0; /* nao deixa o painel encolher: o `main` rola em vez de cortar o conteudo */
 }
 .panel-head {
   display: flex;
@@ -192,7 +193,18 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 .icon-btn:hover { color: var(--text); }
 
 /* ---------- Env list ---------- */
-.env-list { display: flex; flex-direction: column; gap: 10px; }
+.env-search {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.env-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 42vh;        /* cap: a lista rola por dentro em vez de empurrar a tela */
+  overflow-y: auto;
+  padding-right: 4px;      /* respiro pra barra de rolagem */
+}
 .env-card {
   display: flex;
   align-items: center;
@@ -270,6 +282,14 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 }
 .statusbar.ok   { color: var(--green); }
 .statusbar.err  { color: var(--red); }
+
+/* animacao basica da mensagem de status (fade + slide ao aparecer) */
+@keyframes statusFlash {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+#status { display: inline-block; }
+#status.flash { animation: statusFlash .22s ease-out; }
 
 /* ---------- Modal ---------- */
 .modal {

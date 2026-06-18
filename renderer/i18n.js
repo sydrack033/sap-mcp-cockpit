@@ -36,7 +36,9 @@ const I18N = {
 
     'envs.title': 'Environments',
     'envs.new': '+ New environment',
+    'envs.search': 'Filter environments…',
     'envs.empty': 'No environment registered yet. Click <b>+ New environment</b>.',
+    'envs.noMatch': 'No environment matches your search.',
 
     'status.ready': 'Ready.',
     'log.view': 'View log',
@@ -142,7 +144,9 @@ const I18N = {
 
     'envs.title': 'Ambientes',
     'envs.new': '+ Novo ambiente',
+    'envs.search': 'Filtrar ambientes…',
     'envs.empty': 'Nenhum ambiente cadastrado ainda. Clique em <b>+ Novo ambiente</b>.',
+    'envs.noMatch': 'Nenhum ambiente corresponde à busca.',
 
     'status.ready': 'Pronto.',
     'log.view': 'Ver log',

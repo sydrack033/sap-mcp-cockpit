@@ -44,7 +44,12 @@ function setStatus(msg, kind) {
   const bar = document.querySelector('.statusbar');
   bar.classList.remove('ok', 'err');
   if (kind) bar.classList.add(kind);
-  $('status').textContent = msg;
+  const el = $('status');
+  el.textContent = msg;
+  // re-dispara a animacao de entrada (fade + slide) da mensagem
+  el.classList.remove('flash');
+  void el.offsetWidth; // forca reflow pra reiniciar a animacao
+  el.classList.add('flash');
 }
 
 let lastLog = '';
@@ -81,12 +86,20 @@ async function saveSettings() {
 // ---------------------------------------------------------------------------
 function renderEnvs() {
   const list = $('env-list');
-  const envs = clients.environments || [];
+  const all = clients.environments || [];
   list.innerHTML = '';
-  $('env-count').textContent = envs.length;
-  $('env-empty').classList.toggle('hidden', envs.length > 0);
+  $('env-count').textContent = all.length;
 
-  envs.forEach((e, idx) => {
+  // filtro de busca (cliente / ambiente / url / profile)
+  const q = ($('env-search') && $('env-search').value || '').trim().toLowerCase();
+  const matches = (e) => !q ||
+    `${e.client_name} ${e.env_name} ${e.url || ''} ${profileId(e)}`.toLowerCase().includes(q);
+
+  let shown = 0;
+  // itera sobre a lista COMPLETA pra preservar o indice real (usado em editar/remover)
+  all.forEach((e, idx) => {
+    if (!matches(e)) return;
+    shown++;
     const card = document.createElement('div');
     card.className = 'env-card';
 
@@ -156,6 +169,18 @@ function renderEnvs() {
     card.appendChild(actions);
     list.appendChild(card);
   });
+
+  // mensagem de vazio: nada cadastrado vs busca sem resultado
+  const empty = $('env-empty');
+  if (all.length === 0) {
+    empty.innerHTML = t('envs.empty');
+    empty.classList.remove('hidden');
+  } else if (shown === 0) {
+    empty.textContent = t('envs.noMatch');
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+  }
 }
 
 async function persistClients() {
@@ -361,6 +386,7 @@ function bind() {
 
   // env
   $('btn-new').onclick = () => openModal(-1);
+  $('env-search').oninput = renderEnvs;
 
   // modal
   $('modal-close').onclick  = closeModal;
