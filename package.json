@@ -24,6 +24,7 @@
       "preload.js",
       "start.js",
       "renderer/**/*",
+      "harness/**/*",
       "package.json"
     ],
     "win": {

@@ -16,7 +16,7 @@ const I18N = {
     'sub': 'SAP environments · vsp · Claude Code / Codex',
 
     'btn.generate': 'Generate configs',
-    'btn.generate.title': 'Writes the config files into the project folder: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md and .gitignore.',
+    'btn.generate.title': 'Writes the config files into the project folder: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md, .gitignore and the .claude/ harness (workflow playbooks; your edits there are never overwritten).',
     'btn.vscode': 'Open in VSCode',
     'btn.vscode.title': 'Opens the project folder in VSCode (uses the command set in Settings). Ready to run Claude Code.',
     'btn.folder': 'Open folder',
@@ -124,7 +124,7 @@ const I18N = {
     'sub': 'Ambientes SAP · vsp · Claude Code / Codex',
 
     'btn.generate': 'Gerar configs',
-    'btn.generate.title': 'Escreve os arquivos de config na pasta do projeto: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md e .gitignore.',
+    'btn.generate.title': 'Escreve os arquivos de config na pasta do projeto: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md, .gitignore e o harness .claude/ (playbooks de trabalho; suas edicoes la nunca sao sobrescritas).',
     'btn.vscode': 'Abrir no VSCode',
     'btn.vscode.title': 'Abre a pasta do projeto no VSCode (usa o comando definido em Configurações). Pronto pra rodar o Claude Code.',
     'btn.folder': 'Abrir pasta',
