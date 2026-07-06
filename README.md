@@ -46,8 +46,68 @@ npm start
 | `CLAUDE.md` / `AGENTS.md` (projeto) | **Claude / Codex** | Instruções do workspace + playbook de operação |
 | `~/.codex/config.toml` (global) | **Codex** | Bloco gerenciado `[mcp_servers.<profile>]` (só se o Codex existir na máquina) |
 | `.gitignore` (projeto) | — | Ignora `.env`, `.vsp.json`, `.mcp.json`, `.codex/`, `cookies*.txt` |
+| `.claude/` (projeto) | **Claude Code** (Codex lê via instrução) | **Harness**: playbooks por tipo de demanda (chamado / desenvolvimento / projeto), subagentes e contexto do cliente — ver seção abaixo |
 
 > **Codex lê MCP do `~/.codex/config.toml` GLOBAL**, não de um arquivo no projeto. O app mescla um bloco gerenciado (delimitado por marcadores) preservando o resto da sua config. As tools MCP só aparecem ao **reiniciar o Codex** (sessão nova).
+
+## Harness de trabalho (`.claude/`)
+
+Além da conexão, o **Gerar configs** monta um **harness** no workspace — fluxos de trabalho prontos que o Claude Code carrega sozinho (inspirado no guia [Everything Claude Code](https://github.com/affaan-m/ECC/blob/main/the-longform-guide.md)):
+
+```
+.claude/
+├── contextos/
+│   ├── acme.md                ← regras do cliente Acme (nomenclatura, transporte…) — PREENCHA
+│   └── globex.md              ← um arquivo por cliente cadastrado, criado sozinho
+├── commands/                  ← /chamado, /desenvolvimento, /projeto
+├── skills/
+│   ├── sap-chamado/           ← playbook de chamado de suporte (diagnóstico + resposta)
+│   ├── sap-desenvolvimento/   ← playbook de solicitação de desenvolvimento (spec → transport)
+│   └── sap-projeto/           ← playbook de projeto multi-sessão (PLANO/PROGRESSO/DECISOES)
+└── agents/
+    ├── sap-investigador.md    ← subagente só-leitura (varredura de código sem poluir contexto)
+    └── sap-desenvolvedor.md   ← subagente que grava objeto pelo fluxo de edição segura
+```
+
+Uso no Claude Code: `/chamado INC0012345 job Z... cancelando`, `/desenvolvimento <spec>`, `/projeto rollout-fiori`. No Codex não há slash commands, mas o `AGENTS.md` instrui a ler o playbook correspondente.
+
+Pensado pro **consultor multi-cliente numa máquina só**: os playbooks são genéricos (1 cópia, seu jeito de trabalhar); o que varia por cliente fica em `contextos/<cliente>.md` — o agente identifica o cliente pelo profile do ambiente (`acme-*` → `contextos/acme.md`) e o `CLAUDE.md` gerado traz esse mapa. Cadastrou cliente novo no Cockpit? O contexto dele nasce vazio no próximo "Gerar configs", pronto pra preencher.
+
+### Como as camadas conversam
+
+O harness (`.claude/`) diz ao agente **o que fazer e em que ordem**; o vsp expõe via MCP **as ferramentas** pra fazer. Eles nunca se falam diretamente — quem junta os dois é o Claude Code em tempo de execução.
+
+**Fase A — preparar (no Cockpit, 1× por cliente):**
+
+```mermaid
+flowchart TD
+    CAD["Você cadastra clientes/ambientes<br/>(Acme/DEV, Acme/PRD, Globex/DEV...)<br/>cada um vira um profile MCP"] -->|"Gerar configs"| CON & HAR
+    CON["<b>Conexão — regenerada sempre</b><br/>.mcp.json · .vsp.json · .env · cookies<br/>CLAUDE.md/AGENTS.md (tabela de ambientes<br/>+ mapa cliente → contexto)"]
+    HAR["<b>Harness .claude/ — só o que falta</b><br/>commands/ + skills/ + agents/ (1 cópia, genérica)<br/>contextos/&lt;cliente&gt;.md (1 por cliente cadastrado)<br/>✏️ arquivo existe? não toca — sua edição fica"]
+    CON & HAR --> WS["Workspace pronto: playbooks genéricos<br/>+ contexto de cada cliente + conexão com cada SAP"]
+```
+
+**Fase B — atender uma demanda (no Claude Code, todo dia):**
+
+```mermaid
+flowchart TD
+    U["Você: /chamado INC0012345 — job Z da Acme cancelando em PRD<br/><i>(a demanda entra como argumento)</i>"] --> CMD
+    CMD["Command → carrega o playbook<br/>skills/sap-chamado/SKILL.md<br/>(entender → investigar → diagnosticar → propor)"] --> CTX
+    CTX["Demanda é da Acme (ambientes acme-*)<br/>→ lê contextos/acme.md<br/>(nomenclatura, transporte, o que é PRD)"] --> EXEC
+    EXEC["Claude executa as fases com as tools do profile certo<br/>mcp__acme-prd__SearchObject, ReadSource... (PRD: só leitura)"]
+    EXEC -.->|"investigação pesada"| AGT["subagente sap-investigador<br/>(só leitura, contexto separado)"]
+    AGT -.->|"só a conclusão"| EXEC
+    EXEC -->|"protocolo MCP"| VSP["vsp.exe (steampunk)"] -->|"HTTP/ADT"| SAP["SAP da Acme"]
+    SAP --> OUT["Entrega: diagnóstico com evidência + texto de resposta do chamado<br/>correção aprovada? → /desenvolvimento (objeto em DEV + transport)"]
+```
+
+| Nível | Onde vive | Muda quando |
+|---|---|---|
+| **Base** | `harness/` (este repo) | O produto evolui — melhoria vale pra todos |
+| **Cliente** | `.claude/contextos/<cliente>.md` | 1× por cliente novo (nasce sozinho, você preenche) |
+| **Demanda** | Argumento do comando + `projetos/<nome>/` | A cada chamado/spec/projeto |
+
+**Customização é o ponto:** o Cockpit escreve esses arquivos **só se não existirem** — edite qualquer um (regras por tipo de chamado, template de resposta, novos comandos como `/auditoria`) e o "Gerar configs" nunca sobrescreve. Apagou um arquivo? O próximo "Gerar configs" restaura o padrão. Os templates ficam em [harness/](harness/) neste repositório.
 
 ## Por que a conexão vai explícita nos args
 

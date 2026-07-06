@@ -138,6 +138,72 @@ function tomlStr(s) {
   return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
+// ---------------------------------------------------------------------------
+// Harness (.claude/): fluxos de trabalho prontos (chamado, desenvolvimento,
+// projeto) copiados dos templates em harness/ para <projeto>/.claude/.
+// Regra de ouro: NUNCA sobrescrever arquivo existente — o .claude/ do workspace
+// pertence ao usuario (ele customiza por cliente/tipo de demanda). Apagar um
+// arquivo la restaura o padrao no proximo "Gerar configs".
+// ---------------------------------------------------------------------------
+const HARNESS_SRC = path.join(__dirname, 'harness');
+
+function copyHarnessTree(srcDir, dstDir, stats) {
+  fs.mkdirSync(dstDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (entry.name.endsWith('.template.md')) continue; // templates com placeholder: instanciados a parte
+    const src = path.join(srcDir, entry.name);
+    const dst = path.join(dstDir, entry.name);
+    if (entry.isDirectory()) {
+      copyHarnessTree(src, dst, stats);
+    } else if (fs.existsSync(dst)) {
+      stats.skipped++;
+    } else {
+      fs.writeFileSync(dst, fs.readFileSync(src, 'utf8'), 'utf8');
+      stats.written++;
+    }
+  }
+}
+
+// Agrupa os ambientes por cliente (slug -> { name, envs }), na ordem de cadastro.
+function clientsOf(envs) {
+  const byClient = new Map();
+  for (const e of envs) {
+    const key = slug(e.client_name);
+    if (!byClient.has(key)) byClient.set(key, { name: e.client_name, envs: [] });
+    byClient.get(key).envs.push(e);
+  }
+  return byClient;
+}
+
+function generateHarness(projectPath, envs) {
+  const stats = { written: 0, skipped: 0 };
+  if (!fs.existsSync(HARNESS_SRC)) return stats; // build sem templates: nao quebra a geracao
+  copyHarnessTree(HARNESS_SRC, path.join(projectPath, '.claude'), stats);
+
+  // ---- contexto por cliente: .claude/contextos/<slug>.md (write-if-missing) ----
+  // Os playbooks sao genericos (1 copia pra todos); o que varia por cliente e o
+  // contexto dele (nomenclatura, transporte, aprovacoes). Cadastrou cliente novo
+  // no Cockpit -> o arquivo de contexto nasce sozinho no proximo "Gerar configs".
+  const tplFile = path.join(HARNESS_SRC, 'contexto-cliente.template.md');
+  if (fs.existsSync(tplFile)) {
+    const tpl = fs.readFileSync(tplFile, 'utf8');
+    const dir = path.join(projectPath, '.claude', 'contextos');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [key, c] of clientsOf(envs)) {
+      const dst = path.join(dir, key + '.md');
+      if (fs.existsSync(dst)) { stats.skipped++; continue; }
+      const ambientes = c.envs.map(e =>
+        `- \`${envIdOf(e)}\` — ${e.env_name} (${e.auth_type}${e.read_only ? ', read-only' : ''})`
+      ).join('\n') || '- (nenhum ambiente cadastrado ainda)';
+      fs.writeFileSync(dst,
+        tpl.replace(/\{\{CLIENTE\}\}/g, c.name).replace(/\{\{AMBIENTES\}\}/g, ambientes),
+        'utf8');
+      stats.written++;
+    }
+  }
+  return stats;
+}
+
 // Conteudo de instrucoes do projeto (usado em CLAUDE.md e AGENTS.md).
 // Objetivo: dar ao LLM, numa leitura so, tudo que ele precisa pra operar o workspace
 // sem gastar tokens vasculhando a pasta ou tentando operacoes que falham.
@@ -169,6 +235,29 @@ function buildInstructionsMd(envs) {
     if (e.mode && e.mode !== 'focused') obs.push(e.mode);
     L.push(`| ${envIdOf(e)} | ${e.client_name} | ${e.env_name} | ${e.auth_type} | ${e.sap_client || '?'} | ${e.url} | ${obs.join(', ') || '-'} |`);
   }
+  L.push('');
+  L.push('## Fluxos de trabalho (harness em `.claude/`)');
+  L.push('O workspace tem playbooks prontos por tipo de demanda (1 copia, valem pra todos os');
+  L.push('clientes). O que varia por cliente e o **contexto dele** (nomenclatura, transporte,');
+  L.push('aprovacoes): **antes de trabalhar numa demanda, leia o contexto do cliente dela**,');
+  L.push('identificado pelo profile do ambiente:');
+  L.push('');
+  for (const [key, c] of clientsOf(envs)) {
+    L.push(`- Cliente **${c.name}** (ambientes \`${key}-*\`): leia \`.claude/contextos/${key}.md\``);
+  }
+  L.push('');
+  L.push('| Demanda | Comando (Claude Code) | Playbook (leia e siga) |');
+  L.push('|---|---|---|');
+  L.push('| Chamado de suporte | `/chamado <numero + relato>` | `.claude/skills/sap-chamado/SKILL.md` |');
+  L.push('| Solicitacao de desenvolvimento | `/desenvolvimento <especificacao>` | `.claude/skills/sap-desenvolvimento/SKILL.md` |');
+  L.push('| Projeto (multi-sessao) | `/projeto <nome ou instrucao>` | `.claude/skills/sap-projeto/SKILL.md` |');
+  L.push('');
+  L.push('- **Codex:** os comandos `/...` sao do Claude Code; no Codex, LEIA o playbook');
+  L.push('  correspondente na tabela acima e siga-o do mesmo jeito.');
+  L.push('- Subagentes (Claude Code): `sap-investigador` (varredura so-leitura, poupa contexto)');
+  L.push('  e `sap-desenvolvedor` (gravar objeto ja especificado).');
+  L.push('- O usuario pode editar/criar arquivos em `.claude/` a vontade (o Cockpit nao');
+  L.push('  sobrescreve; apagar um arquivo restaura o padrao no proximo "Gerar configs").');
   L.push('');
   L.push('## Testar conexao (rapido, sem gastar token a toa)');
   L.push('Para provar que um ambiente conecta e autentica, faca **uma busca ADT leve** pelo');
@@ -357,6 +446,15 @@ function generateConfigs(settings, clients) {
   fs.writeFileSync(path.join(projectPath, 'CLAUDE.md'), instructions, 'utf8');
   fs.writeFileSync(path.join(projectPath, 'AGENTS.md'), instructions, 'utf8');
 
+  // ---- Harness .claude/ (playbooks de chamado/desenvolvimento/projeto) ----
+  // Write-if-missing: nunca sobrescreve customizacao do usuario.
+  let harness = { written: 0, skipped: 0 };
+  try {
+    harness = generateHarness(projectPath, envs);
+  } catch (e) {
+    console.error('Falha ao gerar harness .claude/:', e);
+  }
+
   // ---- .env (senhas on-premise) ----
   const envLines = [
     '# Senhas dos ambientes On-Premise (basic auth).',
@@ -388,9 +486,10 @@ function generateConfigs(settings, clients) {
     ok: true,
     key: 'be.configsGenerated',
     args: [projectPath, envs.length],
-    files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
+    files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md', '.claude/ (harness)'],
     count: envs.length,
-    codexGlobal: codexGlobalFile
+    codexGlobal: codexGlobalFile,
+    harness
   };
 }
 
