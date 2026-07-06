@@ -92,6 +92,28 @@ Clique em **+ Novo ambiente** e preencha:
   - **Usuário SAP** e **Senha**.
   - **--insecure** → deixe **ligado** (já vem marcado). Servidor on-prem quase sempre tem certificado *self-signed*; sem isso dá erro de TLS.
 
+### On-Premise: descobrir a URL certa (porta, SICF, hostname)
+
+O vsp fala **HTTP/HTTPS** (não é o protocolo do SAP GUI), então a URL precisa apontar pra **porta HTTP(S) do ICM** com o **ADT ativo**. Faça estas checagens no **SAP GUI**:
+
+1. **Porta HTTP/HTTPS certa (SMICM):** rode `/nSMICM` → menu **Ir para → Serviços** (*Goto → Services*). Ali aparecem as portas **HTTP** e **HTTPS** ativas (ex.: HTTPS `44300`, HTTP `8000`). Use essa porta na URL: `https://<host>:44300`.
+
+2. **ADT ativo na SICF:** rode `/nSICF` → navegue em `default_host → sap → bc → `**`adt`**. Se o nó **`adt`** (e os filhos) estiver **cinza/inativo**, clique com o botão direito → **Ativar serviço** (*Activate*). Sem isso dá `403 Service cannot be reached`.
+
+3. **Testar o HTTP pelo Fiori Launchpad:** rode **`/n/UI2/FLP`** — se o Launchpad **abrir no navegador**, o **ICM/HTTP está funcionando**, e a **URL na barra do navegador mostra o host + a porta** que o SAP usa. Ótimo pra confirmar o endpoint certo pra colocar no Cockpit.
+
+4. **Hostname que não resolve → arquivo `hosts`:** muitas vezes o SAP espera/responde por um **hostname** (ex.: `sapqas`) que a sua máquina não sabe resolver, enquanto o **SAP Logon** conecta direto pelo **IP interno**. Solução: pegue o **IP** que está no **SAP Logon** e mapeie pro hostname no arquivo `hosts` do Windows:
+   - Abra o **Bloco de Notas como Administrador** e edite:
+     `C:\Windows\System32\drivers\etc\hosts`
+   - Adicione uma linha no formato **`IP<TAB/espaços>hostname [fqdn]`**:
+     ```
+     10.20.30.40    sapqas    sapqas.suaempresa.com
+     ```
+     (`10.20.30.40` = o IP interno que está no SAP Logon; `sapqas` = o hostname que aparece na URL/erro). Salve.
+   - Agora `https://sapqas:44300` **resolve**. Use o **hostname** (não o IP) na URL do Cockpit — o certificado e o ADT muitas vezes só batem com o hostname.
+
+> **Regra de ouro on-prem:** URL = `https://<hostname>:<porta-HTTPS-da-SMICM>`, com o hostname resolvendo (DNS ou `hosts`) pro IP do SAP Logon, e o **ADT ativado na SICF**.
+
 ### Os modos do MCP (`Mode`)
 
 Controla **quantas/quais ferramentas** o vsp expõe pro LLM:
@@ -182,7 +204,9 @@ Troque `<profile>` pelo nome do seu ambiente (ex.: `acme-qas`).
 | **As tools `mcp__*` não aparecem** | **Codex:** reinicie (sessão nova). **Claude:** aprove o MCP / Reload Window. |
 | `SAP URL is required` no startup do MCP | Config antiga (`-s`). **Gere as configs de novo** com esta versão do Cockpit. |
 | `tls: certificate has expired` | On-prem self-signed → marque **--insecure** e gere as configs de novo. |
-| `403 ... Service cannot be reached` | ADT não ativo na **SICF** (lado SAP), não é conexão. |
+| Não conecta / host não encontrado (on-prem) | Confira **porta** (SMICM → Serviços), **ADT ativo na SICF** e o **hostname no `hosts`** — ver a seção "On-Premise: descobrir a URL certa". |
+| `403 ... Service cannot be reached` | ADT **não ativo na SICF** → ative `default_host/sap/bc/adt` na `/nSICF`. |
+| `403 ... ExceptionResourceNoAuthorization` ("Keine Berechtigung") | **Falta de autorização do usuário** (não é SICF). Falta o objeto **`S_ADT_RES`** (+ `S_DEVELOP`, `S_RFC`). Rode **`/nSU53`** logo após o erro pra ver o que faltou e passe pro Basis. Típico de user de **QAS/PRD** mais restrito que o de DEV. |
 | Auth falhou / pediu senha (cloud) | Cookie SSO expirou → **Login SSO** de novo. |
 | `423 lock handle invalid` ao criar/editar objeto | Use **mode expert** + fluxo `LockObject→UpdateSource→Activate→UnlockObject`. Em **SAP ECC antigo** isso pode ser um limite do próprio vsp (sessão stateful do ADT). |
 | Windows bloqueou o `.exe` | SmartScreen → **Mais informações → Executar assim mesmo**. |
