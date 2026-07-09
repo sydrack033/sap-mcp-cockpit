@@ -67,12 +67,14 @@ function fillSettings() {
   $('set-project').value = settings.project_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
+  $('set-logmcp').checked = settings.log_mcp !== false; // ligado por padrao
 }
 function readSettingsFromForm() {
   settings.vsp_path     = $('set-vsp').value.trim();
   settings.project_path = $('set-project').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
+  settings.log_mcp      = $('set-logmcp').checked;
 }
 
 async function saveSettings() {
@@ -289,7 +291,8 @@ async function generateConfigs() {
 
   setStatus(t('msg.generating'));
   const res = await window.api.generateConfigs({ settings, clients });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+  const warn = res.warn ? ' — ⚠ ' + t(res.warn) : '';
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + warn, res.ok ? 'ok' : 'err');
 }
 
 async function openVscode() {

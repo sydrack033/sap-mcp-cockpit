@@ -23,6 +23,8 @@
       "main.js",
       "preload.js",
       "start.js",
+      "mcp-logger.js",
+      "mcp-log-stats.js",
       "renderer/**/*",
       "harness/**/*",
       "package.json"

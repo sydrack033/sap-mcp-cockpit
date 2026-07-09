@@ -82,6 +82,11 @@
             <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
           </div>
         </div>
+        <label class="check">
+          <input id="set-logmcp" type="checkbox" checked />
+          <span data-i18n="settings.logmcp">Log MCP calls (requests/responses + token estimate)</span>
+        </label>
+        <p class="hint" data-i18n-html="settings.logmcp.hint">Records every MCP request/response in <code>logs/</code> inside the project folder and generates <code>mcp-stats.cmd</code> (usage report: traffic, model used and real tokens).</p>
         <div class="row end">
           <button id="btn-save-settings" class="btn btn-sm btn-primary"
             data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
