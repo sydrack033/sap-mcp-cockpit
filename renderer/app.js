@@ -60,6 +60,55 @@ function showLog(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Dialogo in-app (alert / confirm)
+// Substitui window.alert / window.confirm de proposito: os dialogs NATIVOS do
+// Electron roubam o foco do teclado da janela e, ao fechar, os inputs de texto
+// param de aceitar digitacao ate reiniciar o app (bug conhecido do Chromium/
+// Electron no Windows). Este dialogo e 100% HTML, entao o foco nunca sai do
+// webContents. Retorna Promise<boolean> (OK=true, Cancelar/fechar=false).
+// ---------------------------------------------------------------------------
+function appDialog({ message, title, okText, cancelText, showCancel }) {
+  return new Promise((resolve) => {
+    const modal = $('confirmmodal');
+    $('confirm-title').textContent = title || '';
+    $('confirm-msg').textContent = message || '';
+    const okBtn = $('confirm-ok');
+    const cancelBtn = $('confirm-cancel');
+    okBtn.textContent = okText || t('dlg.ok');
+    cancelBtn.textContent = cancelText || t('dlg.cancel');
+    cancelBtn.classList.toggle('hidden', !showCancel);
+
+    let done = false;
+    const close = (val) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener('keydown', onKey, true);
+      modal.classList.add('hidden');
+      okBtn.onclick = cancelBtn.onclick = modal.onclick = null;
+      resolve(val);
+    };
+    // Enter confirma; Esc cancela (num alert, ambos apenas fecham).
+    const onKey = (ev) => {
+      if (ev.key === 'Enter')       { ev.preventDefault(); close(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); close(showCancel ? false : true); }
+    };
+    okBtn.onclick     = () => close(true);
+    cancelBtn.onclick = () => close(false);
+    modal.onclick     = (ev) => { if (ev.target === modal) close(showCancel ? false : true); };
+    document.addEventListener('keydown', onKey, true);
+
+    modal.classList.remove('hidden');
+    okBtn.focus();
+  });
+}
+function appAlert(message, title) {
+  return appDialog({ message, title: title || t('dlg.attention'), showCancel: false });
+}
+function appConfirm(message, title) {
+  return appDialog({ message, title: title || t('dlg.confirm'), showCancel: true });
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 function fillSettings() {
@@ -189,7 +238,7 @@ async function persistClients() {
 
 async function removeEnv(idx) {
   const e = clients.environments[idx];
-  if (!confirm(t('confirm.remove', `${e.client_name} · ${e.env_name}`))) return;
+  if (!(await appConfirm(t('confirm.remove', `${e.client_name} · ${e.env_name}`)))) return;
   clients.environments.splice(idx, 1);
   await persistClients();
   renderEnvs();
@@ -251,11 +300,14 @@ async function saveEnv() {
 
   // validacao
   if (!e.client_name || !e.env_name || !e.url || !e.sap_client) {
-    alert(t('alert.required'));
+    appAlert(t('alert.required')).then(() => {
+      const first = ['f-client', 'f-env', 'f-url', 'f-sapclient'].find(id2 => !$(id2).value.trim());
+      if (first) $(first).focus();
+    });
     return;
   }
   if (authType === 'onprem' && !e.user) {
-    alert(t('alert.onpremUser'));
+    appAlert(t('alert.onpremUser')).then(() => $('f-user').focus());
     return;
   }
 
@@ -263,7 +315,7 @@ async function saveEnv() {
   const id = profileId(e);
   const dup = clients.environments.findIndex((x, i) => profileId(x) === id && i !== editIndex);
   if (dup >= 0) {
-    alert(t('alert.dup', id));
+    appAlert(t('alert.dup', id)).then(() => $('f-client').focus());
     return;
   }
 

@@ -78,6 +78,11 @@ const I18N = {
     'tag.ro': 'RO',
     'meta.client': 'client',
 
+    'dlg.ok': 'OK',
+    'dlg.cancel': 'Cancel',
+    'dlg.attention': 'Attention',
+    'dlg.confirm': 'Confirm',
+
     'msg.settingsSaved': 'Settings saved.',
     'msg.envRemoved': 'Environment removed.',
     'confirm.remove': 'Remove the environment "{0}"?',
@@ -185,6 +190,11 @@ const I18N = {
     'tag.onprem': 'On-Prem',
     'tag.ro': 'RO',
     'meta.client': 'client',
+
+    'dlg.ok': 'OK',
+    'dlg.cancel': 'Cancelar',
+    'dlg.attention': 'Atenção',
+    'dlg.confirm': 'Confirmar',
 
     'msg.settingsSaved': 'Configurações salvas.',
     'msg.envRemoved': 'Ambiente removido.',

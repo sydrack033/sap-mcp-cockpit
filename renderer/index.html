@@ -212,6 +212,24 @@
     </div>
   </div>
 
+  <!-- Dialogo in-app (alert / confirm). Substitui window.alert / window.confirm:
+       os dialogs NATIVOS do Electron roubam o foco do teclado e, ao fechar, os
+       inputs param de aceitar digitacao ate reiniciar o app. Em HTML nao ha esse bug. -->
+  <div id="confirmmodal" class="modal hidden">
+    <div class="modal-card modal-sm">
+      <div class="modal-head">
+        <h3 id="confirm-title">Attention</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-msg" class="dlg-msg"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="confirm-ok" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Log viewer -->
   <div id="logmodal" class="modal hidden">
     <div class="modal-card">

@@ -325,6 +325,11 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 .modal-body { padding: 18px; overflow-y: auto; }
 .onprem.hidden { display: none; }
 
+/* dialogo in-app (alert/confirm) */
+.modal-card.modal-sm { width: 420px; }
+.dlg-msg { margin: 0; line-height: 1.5; color: var(--text); white-space: pre-wrap; }
+#confirm-cancel.hidden { display: none; }
+
 .logbox {
   background: #0f0c09;
   border: 1px solid var(--line);
