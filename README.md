@@ -32,7 +32,7 @@ npm start
    - Use **expert** se for **criar/editar objeto** (precisa das tools `LockObject`/`UpdateSource`).
 3. **Login SSO** (só Cloud): no card do ambiente → **Login SSO** → conclua no Chrome → cookie salvo (`cookies-<profile>.txt`).
 4. **Testar**: pinga o ambiente (busca ADT leve) e diz se conexão + auth + ADT estão OK.
-5. **Gerar configs**: escreve a config (ver tabela abaixo).
+5. **Gerar configs**: escreve a config (ver tabela abaixo) e, no fim, **encerra os processos `vsp` que ficaram rodando** — eles seguram a config antiga em memória e fariam o MCP continuar respondendo com os profiles/cookies velhos. Depois disso, **reinicie o host MCP** (Claude Code / Codex) pra ele subir o `vsp` com a config nova.
 6. **Abrir no VSCode**: abre a pasta do projeto pro Claude Code.
 
 ## Arquivos / config gerados

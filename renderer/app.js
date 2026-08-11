@@ -344,7 +344,11 @@ async function generateConfigs() {
   setStatus(t('msg.generating'));
   const res = await window.api.generateConfigs({ settings, clients });
   const warn = res.warn ? ' — ⚠ ' + t(res.warn) : '';
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + warn, res.ok ? 'ok' : 'err');
+  // vspKilled: numero de processos derrubados; null = derrubou mas nao da pra contar (pkill)
+  let killed = '';
+  if (res.vspKilled === null) killed = ' — ' + t('msg.vspKilledSome');
+  else if (res.vspKilled > 0) killed = ' — ' + t('msg.vspKilled', res.vspKilled);
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killed + warn, res.ok ? 'ok' : 'err');
 }
 
 async function openVscode() {

@@ -491,6 +491,37 @@ function mergeCodexGlobalConfig(settings, envs, logging) {
 }
 
 // ---------------------------------------------------------------------------
+// Encerra os processos vsp que ficaram vivos da geracao anterior.
+// O host MCP (Claude/Codex) sobe o vsp como filho e ele SEGURA a config antiga
+// em memoria: sem matar, o MCP continua respondendo com os profiles/cookies
+// velhos e a config recem-gerada nao vale nada. Equivale ao
+//   Get-Process vsp | Stop-Process -Force
+// que antes precisava ser rodado na mao a cada "Gerar configs".
+// Sem /T de proposito: o browser-auth abre o Chrome como filho e derrubar a
+// arvore fecharia a janela do usuario.
+// ---------------------------------------------------------------------------
+function killVspProcesses(settings) {
+  const base = path.basename((settings && settings.vsp_path) || 'vsp.exe');
+  try {
+    if (process.platform === 'win32') {
+      const image = /\.exe$/i.test(base) ? base : base + '.exe';
+      const r = spawnSync('taskkill', ['/F', '/IM', image], { timeout: 10000 });
+      // taskkill sai != 0 quando nao ha processo ("not found") - isso nao e erro.
+      const out = String((r.stdout || '') + (r.stderr || ''));
+      const killed = (out.match(/PID/g) || []).length;
+      return { killed };
+    }
+    const name = base.replace(/\.exe$/i, '');
+    const r = spawnSync('pkill', ['-x', name], { timeout: 10000 });
+    // pkill: 0 = matou algo, 1 = nada rodando. Nao da pra contar quantos.
+    return { killed: r.status === 0 ? null : 0 };
+  } catch (e) {
+    console.error('Falha ao encerrar processos vsp:', e);
+    return { killed: 0, error: e.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Geracao dos arquivos de configuracao na pasta do projeto
 // ---------------------------------------------------------------------------
 function generateConfigs(settings, clients) {
@@ -612,10 +643,16 @@ function generateConfigs(settings, clients) {
   ].join('\n');
   fs.writeFileSync(path.join(projectPath, '.gitignore'), gitignore, 'utf8');
 
+  // ---- Derruba o vsp velho (DEPOIS de escrever tudo) ----
+  // Se matasse antes, o host poderia respawnar no meio da escrita e pegar
+  // config pela metade.
+  const vsp = killVspProcesses(settings);
+
   const res = {
     ok: true,
     key: 'be.configsGenerated',
     args: [projectPath, envs.length],
+    vspKilled: vsp.killed,
     files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md', '.claude/ (harness)'],
     count: envs.length,
     codexGlobal: codexGlobalFile,
