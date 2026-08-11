@@ -16,7 +16,7 @@ const I18N = {
     'sub': 'SAP environments · vsp · Claude Code / Codex',
 
     'btn.generate': 'Generate configs',
-    'btn.generate.title': 'Writes the config files into the project folder: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md, .gitignore and the .claude/ harness (workflow playbooks; your edits there are never overwritten).',
+    'btn.generate.title': 'Writes the config files into the project folder: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md and .gitignore.',
     'btn.vscode': 'Open in VSCode',
     'btn.vscode.title': 'Opens the project folder in VSCode (uses the command set in Settings). Ready to run Claude Code.',
     'btn.folder': 'Open folder',
@@ -33,8 +33,6 @@ const I18N = {
     'settings.vscode.hint': "Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.",
     'settings.save': 'Save settings',
     'settings.save.title': "Saves only these app preferences (paths + command). Does NOT generate the project files — use 'Generate configs' for that.",
-    'settings.logmcp': 'Log MCP calls (requests/responses + token estimate)',
-    'settings.logmcp.hint': 'Records every MCP request/response in <code>logs/</code> inside the project folder and generates <code>mcp-stats.cmd</code> (usage report: traffic per profile/tool, model used and real tokens from Claude Code transcripts). Applied on the next "Generate configs".',
 
     'envs.title': 'Environments',
     'envs.new': '+ New environment',
@@ -121,7 +119,6 @@ const I18N = {
     'be.testNoCookie': '{0}: no SSO cookie yet — run SSO Login first.',
     'be.testNoPassword': '{0}: no password set for this On-Premise environment.',
     'be.testFail': '{0}: connection test failed. See the log.',
-    'be.loggerNoNode': 'MCP logging skipped: no Node.js / VS Code runtime found to run the logger (servers were generated without the proxy).',
     'be.updateDevMode': 'Auto-update only works in the installed app (not when running from source).',
 
     'update.checking': 'Checking for updates…',
@@ -142,7 +139,7 @@ const I18N = {
     'sub': 'Ambientes SAP · vsp · Claude Code / Codex',
 
     'btn.generate': 'Gerar configs',
-    'btn.generate.title': 'Escreve os arquivos de config na pasta do projeto: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md, .gitignore e o harness .claude/ (playbooks de trabalho; suas edicoes la nunca sao sobrescritas).',
+    'btn.generate.title': 'Escreve os arquivos de config na pasta do projeto: .vsp.json, .mcp.json (Claude), codex.toml (Codex), .env, CLAUDE.md, AGENTS.md e .gitignore.',
     'btn.vscode': 'Abrir no VSCode',
     'btn.vscode.title': 'Abre a pasta do projeto no VSCode (usa o comando definido em Configurações). Pronto pra rodar o Claude Code.',
     'btn.folder': 'Abrir pasta',
@@ -159,8 +156,6 @@ const I18N = {
     'settings.vscode.hint': 'Comando que abre o VSCode. Deixe <code>code</code> se ele está no PATH; senão aponte pro <code>Code.exe</code>.',
     'settings.save': 'Salvar configurações',
     'settings.save.title': "Salva apenas estas preferências do app (caminhos + comando). NÃO gera os arquivos do projeto — pra isso use 'Gerar configs'.",
-    'settings.logmcp': 'Logar chamadas MCP (requests/responses + estimativa de tokens)',
-    'settings.logmcp.hint': 'Grava cada request/response MCP em <code>logs/</code> na pasta do projeto e gera o <code>mcp-stats.cmd</code> (relatório de uso: tráfego por profile/tool, modelo usado e tokens reais dos transcripts do Claude Code). Vale a partir do próximo "Gerar configs".',
 
     'envs.title': 'Ambientes',
     'envs.new': '+ Novo ambiente',
@@ -247,7 +242,6 @@ const I18N = {
     'be.testNoCookie': '{0}: sem cookie SSO ainda — faça o Login SSO primeiro.',
     'be.testNoPassword': '{0}: sem senha definida para este ambiente On-Premise.',
     'be.testFail': '{0}: teste de conexão falhou. Veja o log.',
-    'be.loggerNoNode': 'Logging MCP pulado: nenhum runtime Node.js / VS Code encontrado pra rodar o logger (servers gerados sem o proxy).',
     'be.updateDevMode': 'Auto-update só funciona no app instalado (não rodando pelo código-fonte).',
 
     'update.checking': 'Procurando atualizações…',

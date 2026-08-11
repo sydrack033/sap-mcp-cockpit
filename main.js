@@ -37,8 +37,7 @@ const DEFAULT_SETTINGS = {
   project_path: '', // vazio de proposito: o usuario escolhe a pasta (placeholder mostra o exemplo)
   chrome_path: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   vscode_cmd: 'code',
-  lang: 'en', // idioma da UI: 'en' (padrao) ou 'pt'
-  log_mcp: true // logar todo o trafego MCP (entrada/saida + estimativa de tokens) em <projeto>/logs/
+  lang: 'en' // idioma da UI: 'en' (padrao) ou 'pt'
 };
 
 function readJson(file, fallback) {
@@ -139,148 +138,9 @@ function tomlStr(s) {
   return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
-// ---------------------------------------------------------------------------
-// Logging MCP: proxy (mcp-logger.js) entre o host (Claude/Codex) e o vsp que
-// grava todo o trafego JSON-RPC em <projeto>/logs/ com estimativa de tokens.
-// O proxy roda em Node - e como esta maquina pode nao ter Node no PATH,
-// resolvemos um runtime em ordem: node -> Code.exe (ELECTRON_RUN_AS_NODE=1)
-// -> o proprio Electron do Cockpit (ultimo recurso: em build portable o
-// caminho pode mudar entre execucoes).
-// ---------------------------------------------------------------------------
-const LOGGER_SRC = path.join(__dirname, 'mcp-logger.js');
-const STATS_SRC  = path.join(__dirname, 'mcp-log-stats.js');
-
-function findNodeRuntime(settings) {
-  // 1) node no PATH
-  try {
-    const r = spawnSync('node', ['--version'], { shell: true, timeout: 5000 });
-    if (r.status === 0) return { command: 'node', env: {} };
-  } catch (e) {}
-
-  // 2) Code.exe rodando como Node (ELECTRON_RUN_AS_NODE=1)
-  const candidates = [];
-  const vc = (settings && settings.vscode_cmd) || '';
-  if (/code\.exe$/i.test(vc) && fs.existsSync(vc)) candidates.push(vc);
-  try {
-    const w = spawnSync('where', ['code'], { timeout: 5000 });
-    if (w.status === 0) {
-      for (const line of String(w.stdout || '').split(/\r?\n/)) {
-        // where devolve <install>/bin/code(.cmd); o Code.exe fica 1 nivel acima
-        if (/\bbin[\\/]+code(\.cmd)?$/i.test(line.trim())) {
-          candidates.push(path.join(path.dirname(path.dirname(line.trim())), 'Code.exe'));
-        }
-      }
-    }
-  } catch (e) {}
-  if (process.env.LOCALAPPDATA) {
-    candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'));
-  }
-  candidates.push('C:/Program Files/Microsoft VS Code/Code.exe');
-  for (const c of candidates) {
-    try { if (c && fs.existsSync(c)) return { command: c.replace(/\\/g, '/'), env: { ELECTRON_RUN_AS_NODE: '1' } }; } catch (e) {}
-  }
-
-  // 3) o proprio executavel do Cockpit (Electron) como Node
-  try {
-    if (process.execPath && fs.existsSync(process.execPath)) {
-      return { command: process.execPath.replace(/\\/g, '/'), env: { ELECTRON_RUN_AS_NODE: '1' } };
-    }
-  } catch (e) {}
-  return null;
-}
-
-// Comando + args + env de um server MCP, com ou sem o proxy de log no meio.
-// `logging` = { runtime, loggerPath, logDir } ou null (sem log).
-function buildServerLaunch(settings, e, logging) {
-  const id = envIdOf(e);
-  const vspArgs = buildMcpArgs(settings, e);
-  if (!logging) return { command: settings.vsp_path, args: vspArgs, env: {} };
-  return {
-    command: logging.runtime.command,
-    args: [logging.loggerPath, '--profile', id, '--log-dir', logging.logDir, '--', settings.vsp_path].concat(vspArgs),
-    env: Object.assign({}, logging.runtime.env)
-  };
-}
-
-// Log das acoes do proprio Cockpit (login SSO, teste de conexao) no mesmo
-// diretorio logs/ do projeto - "entradas e saidas de tudo" inclui o Cockpit.
-function cockpitLog(settings, entry) {
-  try {
-    if (!settings || settings.log_mcp === false || !settings.project_path) return;
-    const dir = path.join(settings.project_path, 'logs');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(
-      path.join(dir, 'cockpit.jsonl'),
-      JSON.stringify(Object.assign({ ts: new Date().toISOString() }, entry)) + '\n',
-      'utf8'
-    );
-  } catch (e) { /* log nunca quebra a acao */ }
-}
-
-// ---------------------------------------------------------------------------
-// Harness (.claude/): fluxos de trabalho prontos (chamado, desenvolvimento,
-// projeto) copiados dos templates em harness/ para <projeto>/.claude/.
-// Regra de ouro: NUNCA sobrescrever arquivo existente — o .claude/ do workspace
-// pertence ao usuario (ele customiza por cliente/tipo de demanda). Apagar um
-// arquivo la restaura o padrao no proximo "Gerar configs".
-// ---------------------------------------------------------------------------
-const HARNESS_SRC = path.join(__dirname, 'harness');
-
-function copyHarnessTree(srcDir, dstDir, stats) {
-  fs.mkdirSync(dstDir, { recursive: true });
-  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
-    if (entry.name.endsWith('.template.md')) continue; // templates com placeholder: instanciados a parte
-    const src = path.join(srcDir, entry.name);
-    const dst = path.join(dstDir, entry.name);
-    if (entry.isDirectory()) {
-      copyHarnessTree(src, dst, stats);
-    } else if (fs.existsSync(dst)) {
-      stats.skipped++;
-    } else {
-      fs.writeFileSync(dst, fs.readFileSync(src, 'utf8'), 'utf8');
-      stats.written++;
-    }
-  }
-}
-
-// Agrupa os ambientes por cliente (slug -> { name, envs }), na ordem de cadastro.
-function clientsOf(envs) {
-  const byClient = new Map();
-  for (const e of envs) {
-    const key = slug(e.client_name);
-    if (!byClient.has(key)) byClient.set(key, { name: e.client_name, envs: [] });
-    byClient.get(key).envs.push(e);
-  }
-  return byClient;
-}
-
-function generateHarness(projectPath, envs) {
-  const stats = { written: 0, skipped: 0 };
-  if (!fs.existsSync(HARNESS_SRC)) return stats; // build sem templates: nao quebra a geracao
-  copyHarnessTree(HARNESS_SRC, path.join(projectPath, '.claude'), stats);
-
-  // ---- contexto por cliente: .claude/contextos/<slug>.md (write-if-missing) ----
-  // Os playbooks sao genericos (1 copia pra todos); o que varia por cliente e o
-  // contexto dele (nomenclatura, transporte, aprovacoes). Cadastrou cliente novo
-  // no Cockpit -> o arquivo de contexto nasce sozinho no proximo "Gerar configs".
-  const tplFile = path.join(HARNESS_SRC, 'contexto-cliente.template.md');
-  if (fs.existsSync(tplFile)) {
-    const tpl = fs.readFileSync(tplFile, 'utf8');
-    const dir = path.join(projectPath, '.claude', 'contextos');
-    fs.mkdirSync(dir, { recursive: true });
-    for (const [key, c] of clientsOf(envs)) {
-      const dst = path.join(dir, key + '.md');
-      if (fs.existsSync(dst)) { stats.skipped++; continue; }
-      const ambientes = c.envs.map(e =>
-        `- \`${envIdOf(e)}\` — ${e.env_name} (${e.auth_type}${e.read_only ? ', read-only' : ''})`
-      ).join('\n') || '- (nenhum ambiente cadastrado ainda)';
-      fs.writeFileSync(dst,
-        tpl.replace(/\{\{CLIENTE\}\}/g, c.name).replace(/\{\{AMBIENTES\}\}/g, ambientes),
-        'utf8');
-      stats.written++;
-    }
-  }
-  return stats;
+// Comando + args + env de um server MCP.
+function buildServerLaunch(settings, e) {
+  return { command: settings.vsp_path, args: buildMcpArgs(settings, e), env: {} };
 }
 
 // Conteudo de instrucoes do projeto (usado em CLAUDE.md e AGENTS.md).
@@ -314,41 +174,6 @@ function buildInstructionsMd(envs) {
     if (e.mode && e.mode !== 'focused') obs.push(e.mode);
     L.push(`| ${envIdOf(e)} | ${e.client_name} | ${e.env_name} | ${e.auth_type} | ${e.sap_client || '?'} | ${e.url} | ${obs.join(', ') || '-'} |`);
   }
-  L.push('');
-  L.push('## Fluxos de trabalho (harness em `.claude/`)');
-  L.push('O workspace tem playbooks prontos por tipo de demanda (1 copia, valem pra todos os');
-  L.push('clientes). O que varia por cliente e o **contexto dele** (nomenclatura, transporte,');
-  L.push('aprovacoes): **antes de trabalhar numa demanda, leia o contexto do cliente dela**,');
-  L.push('identificado pelo profile do ambiente:');
-  L.push('');
-  for (const [key, c] of clientsOf(envs)) {
-    L.push(`- Cliente **${c.name}** (ambientes \`${key}-*\`): leia \`.claude/contextos/${key}.md\``);
-  }
-  L.push('');
-  L.push('| Demanda | Comando (Claude Code) | Playbook (leia e siga) |');
-  L.push('|---|---|---|');
-  L.push('| Chamado de suporte | `/chamado <numero + relato>` | `.claude/skills/sap-chamado/SKILL.md` |');
-  L.push('| Solicitacao de desenvolvimento | `/desenvolvimento <especificacao>` | `.claude/skills/sap-desenvolvimento/SKILL.md` |');
-  L.push('| Projeto (multi-sessao) | `/projeto <nome ou instrucao>` | `.claude/skills/sap-projeto/SKILL.md` |');
-  L.push('');
-  L.push('- **Codex:** os comandos `/...` sao do Claude Code; no Codex, LEIA o playbook');
-  L.push('  correspondente na tabela acima e siga-o do mesmo jeito.');
-  L.push('- Subagentes (Claude Code): `sap-investigador` (varredura so-leitura, poupa contexto)');
-  L.push('  e `sap-desenvolvedor` (gravar objeto ja especificado).');
-  L.push('- O usuario pode editar/criar arquivos em `.claude/` a vontade (o Cockpit nao');
-  L.push('  sobrescreve; apagar um arquivo restaura o padrao no proximo "Gerar configs").');
-  L.push('');
-  L.push('## Logs de chamadas MCP + consumo de tokens');
-  L.push('- Todo o trafego MCP (cada request/response de cada profile) e gravado em');
-  L.push('  `logs/mcp-<profile>-<data>.jsonl` (1 JSON por linha: ts, dir in/out, method, tool,');
-  L.push('  bytes, `est_tokens` ~4 chars/token). Acoes do Cockpit (login SSO, teste) vao em');
-  L.push('  `logs/cockpit.jsonl`. Os servers MCP passam pelo proxy `mcp-logger.js` (gerado; nao editar).');
-  L.push('- **Relatorio de consumo:** rode `mcp-stats.cmd` (Windows) — soma o trafego MCP por');
-  L.push('  profile/metodo/tool e le os transcripts do Claude Code para reportar o **modelo usado**');
-  L.push('  e os **tokens reais** (input/output/cache) por modelo; Codex e best-effort.');
-  L.push('- O modelo do LLM **nao trafega no MCP** (o handshake `initialize` so identifica o app');
-  L.push('  cliente). Modelo e tokens reais vem dos transcripts do host (`~/.claude/projects/...`).');
-  L.push('- Logs sao locais (no .gitignore) e podem conter codigo-fonte trafegado — nao versionar.');
   L.push('');
   L.push('## Testar conexao (rapido, sem gastar token a toa)');
   L.push('Para provar que um ambiente conecta e autentica, faca **uma busca ADT leve** pelo');
@@ -446,11 +271,11 @@ function stripManagedCodexBlocks(text) {
   return out.replace(/\s+$/, '');
 }
 
-function buildCodexBlock(settings, envs, logging) {
+function buildCodexBlock(settings, envs) {
   const lines = [CODEX_MARK_START];
   for (const e of envs) {
     const id = envIdOf(e);
-    const launch = buildServerLaunch(settings, e, logging);
+    const launch = buildServerLaunch(settings, e);
     lines.push(`[mcp_servers.${id}]`);
     lines.push(`command = ${tomlStr(launch.command)}`);
     lines.push(`args = [${launch.args.map(tomlStr).join(', ')}]`);
@@ -476,7 +301,7 @@ function buildCodexBlock(settings, envs, logging) {
 // Mescla o bloco gerenciado no ~/.codex/config.toml, preservando o resto da config.
 // So mexe se o Codex ja existe na maquina (pasta ~/.codex presente) — assim nao criamos
 // arquivo no home de quem so usa Claude Code. Retorna '' quando pula.
-function mergeCodexGlobalConfig(settings, envs, logging) {
+function mergeCodexGlobalConfig(settings, envs) {
   const dir = path.join(os.homedir(), '.codex');
   if (!fs.existsSync(dir)) return '';
   const file = path.join(dir, 'config.toml');
@@ -484,7 +309,7 @@ function mergeCodexGlobalConfig(settings, envs, logging) {
   try { if (fs.existsSync(file)) existing = fs.readFileSync(file, 'utf8'); } catch (e) {}
   // remove blocos gerenciados anteriores (marcador atual + antigo) e limpa espacos finais
   const base = stripManagedCodexBlocks(existing);
-  const block = buildCodexBlock(settings, envs, logging);
+  const block = buildCodexBlock(settings, envs);
   const out = (base ? base + '\n\n' : '') + block + '\n';
   fs.writeFileSync(file, out, 'utf8');
   return file;
@@ -533,38 +358,6 @@ function generateConfigs(settings, clients) {
 
   const envs = (clients.environments || []);
 
-  // ---- Logging MCP: copia o proxy/relatorio e resolve o runtime Node ----
-  // Os scripts sao gerados (sobrescritos a cada geracao, ao contrario do
-  // harness .claude/ que e write-if-missing).
-  let logging = null;
-  let loggerWarn = '';
-  if (settings.log_mcp !== false) {
-    const runtime = findNodeRuntime(settings);
-    if (!runtime) {
-      loggerWarn = 'be.loggerNoNode';
-    } else {
-      const logDir = path.join(projectPath, 'logs').replace(/\\/g, '/');
-      fs.mkdirSync(logDir, { recursive: true });
-      const loggerPath = path.join(projectPath, 'mcp-logger.js').replace(/\\/g, '/');
-      const statsPath  = path.join(projectPath, 'mcp-log-stats.js').replace(/\\/g, '/');
-      try {
-        fs.writeFileSync(loggerPath, fs.readFileSync(LOGGER_SRC, 'utf8'), 'utf8');
-        fs.writeFileSync(statsPath, fs.readFileSync(STATS_SRC, 'utf8'), 'utf8');
-        logging = { runtime, loggerPath, logDir };
-        // atalho pro relatorio: mcp-stats.cmd (duplo clique ou terminal)
-        const cmdLines = ['@echo off', 'rem Gerado pelo SAP MCP Cockpit - relatorio de chamadas MCP e tokens', 'setlocal'];
-        if (runtime.env.ELECTRON_RUN_AS_NODE) cmdLines.push('set ELECTRON_RUN_AS_NODE=1');
-        cmdLines.push(`"${runtime.command}" "%~dp0mcp-log-stats.js" "%~dp0."`);
-        cmdLines.push('endlocal', 'pause', '');
-        fs.writeFileSync(path.join(projectPath, 'mcp-stats.cmd'), cmdLines.join('\r\n'), 'utf8');
-      } catch (e) {
-        console.error('Falha ao preparar logging MCP:', e);
-        logging = null;
-        loggerWarn = 'be.loggerNoNode';
-      }
-    }
-  }
-
   // ---- .vsp.json (fonte da verdade dos sistemas) ----
   const systems = {};
   for (const e of envs) {
@@ -580,7 +373,7 @@ function generateConfigs(settings, clients) {
   const mcpServers = {};
   for (const e of envs) {
     const id = envIdOf(e);
-    const launch = buildServerLaunch(settings, e, logging);
+    const launch = buildServerLaunch(settings, e);
     const server = { command: launch.command, args: launch.args };
     const envMap = Object.assign({}, launch.env);
     if (e.auth_type === 'onprem' && e.password) {
@@ -596,7 +389,7 @@ function generateConfigs(settings, clients) {
   // por projeto). Mesclamos um bloco gerenciado, preservando o resto da config.
   let codexGlobalFile = '';
   try {
-    codexGlobalFile = mergeCodexGlobalConfig(settings, envs, logging);
+    codexGlobalFile = mergeCodexGlobalConfig(settings, envs);
   } catch (e) {
     console.error('Falha ao mesclar Codex global config:', e);
   }
@@ -605,15 +398,6 @@ function generateConfigs(settings, clients) {
   const instructions = buildInstructionsMd(envs);
   fs.writeFileSync(path.join(projectPath, 'CLAUDE.md'), instructions, 'utf8');
   fs.writeFileSync(path.join(projectPath, 'AGENTS.md'), instructions, 'utf8');
-
-  // ---- Harness .claude/ (playbooks de chamado/desenvolvimento/projeto) ----
-  // Write-if-missing: nunca sobrescreve customizacao do usuario.
-  let harness = { written: 0, skipped: 0 };
-  try {
-    harness = generateHarness(projectPath, envs);
-  } catch (e) {
-    console.error('Falha ao gerar harness .claude/:', e);
-  }
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
@@ -638,7 +422,6 @@ function generateConfigs(settings, clients) {
     '.codex/',
     'codex.toml',
     'cookies*.txt',
-    'logs/',
     ''
   ].join('\n');
   fs.writeFileSync(path.join(projectPath, '.gitignore'), gitignore, 'utf8');
@@ -648,20 +431,15 @@ function generateConfigs(settings, clients) {
   // config pela metade.
   const vsp = killVspProcesses(settings);
 
-  const res = {
+  return {
     ok: true,
     key: 'be.configsGenerated',
     args: [projectPath, envs.length],
     vspKilled: vsp.killed,
-    files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md', '.claude/ (harness)'],
+    files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
     count: envs.length,
-    codexGlobal: codexGlobalFile,
-    harness,
-    logging: logging ? { enabled: true, runtime: logging.runtime.command } : { enabled: false }
+    codexGlobal: codexGlobalFile
   };
-  if (logging) res.files.push('mcp-logger.js', 'mcp-log-stats.js', 'mcp-stats.cmd', 'logs/');
-  if (loggerWarn) res.warn = loggerWarn;
-  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,15 +605,6 @@ ipcMain.handle('vsp:login', (_evt, payload) => {
   return new Promise((resolve) => {
     const { settings, env } = payload;
     const projectPath = settings.project_path;
-    const t0 = Date.now();
-    const rawResolve = resolve;
-    resolve = (res) => { // toda saida do handler passa pelo log
-      cockpitLog(settings, {
-        action: 'sso_login', profile: envIdOf(env), ok: !!res.ok, key: res.key,
-        duration_ms: Date.now() - t0, output_bytes: res.log ? Buffer.byteLength(res.log) : 0
-      });
-      rawResolve(res);
-    };
 
     if (!fs.existsSync(settings.vsp_path)) {
       resolve({ ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] });
@@ -940,15 +709,6 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
     const { settings, env } = payload;
     const projectPath = settings.project_path;
     const id = envIdOf(env);
-    const t0 = Date.now();
-    const rawResolve = resolve;
-    resolve = (res) => { // toda saida do handler passa pelo log
-      cockpitLog(settings, {
-        action: 'connection_test', profile: id, ok: !!res.ok, key: res.key,
-        duration_ms: Date.now() - t0, output_bytes: res.log ? Buffer.byteLength(res.log) : 0
-      });
-      rawResolve(res);
-    };
 
     if (!fs.existsSync(settings.vsp_path)) {
       resolve({ ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] });
