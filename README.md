@@ -140,7 +140,7 @@ gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cock
 
 ## Auto-update
 
-A partir da **v2.2.0** o app se atualiza sozinho: `electron-updater` + as Releases deste repositório (repo público, então não precisa de token).
+A partir da **v2.0.0** o app se atualiza sozinho: `electron-updater` + as Releases deste repositório (repo público, então não precisa de token).
 
 Como funciona:
 1. 3 segundos depois de abrir, o app consulta a release mais recente do GitHub.
