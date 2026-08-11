@@ -23,6 +23,7 @@ async function changeLang(lang) {
   settings.lang = window.i18n.getLang();
   await window.api.saveSettings(settings);
   renderEnvs();
+  renderUpdate(); // a pilula de update e montada em JS, o data-i18n nao a alcanca
   if (!$('modal').classList.contains('hidden')) {
     $('modal-title').textContent = (editIndex >= 0) ? t('modal.edit') : t('modal.new');
   }
@@ -481,6 +482,58 @@ async function refreshCookieStatus() {
   } catch (e) { /* ignora */ }
 }
 
+// ---------------------------------------------------------------------------
+// Auto-update: pilula na statusbar. So aparece quando ha algo a dizer —
+// 'idle'/'current'/'dev' ficam escondidos pra nao poluir a barra.
+// ---------------------------------------------------------------------------
+let updateLast = null;
+
+function renderUpdate(s) {
+  updateLast = s || updateLast;
+  if (!updateLast) return;
+  const pill = $('update-pill');
+  const msg  = $('update-msg');
+  const btn  = $('btn-update-install');
+  const { state, version, percent } = updateLast;
+
+  pill.classList.remove('ready', 'err');
+  btn.classList.add('hidden');
+
+  if (state === 'checking')         msg.textContent = t('update.checking');
+  else if (state === 'downloading') msg.textContent = t('update.downloading', version || '', percent || 0);
+  else if (state === 'ready') {
+    msg.textContent = t('update.ready', version || '');
+    pill.classList.add('ready');
+    btn.classList.remove('hidden');
+  } else if (state === 'error') {
+    msg.textContent = t('update.error');
+    pill.classList.add('err');
+  } else {
+    pill.classList.add('hidden'); // idle / current / dev
+    return;
+  }
+  pill.classList.remove('hidden');
+}
+
+async function initUpdates() {
+  // Nada aqui pode derrubar o boot: sem updater o app tem que abrir igual.
+  try {
+    window.api.onUpdateStatus(renderUpdate);
+    $('btn-update-install').onclick = () => window.api.updateInstall();
+    const s = await window.api.updateState();
+    const v = $('app-version');
+    v.textContent = 'v' + (s.appVersion || '?');
+    v.title = t('update.checkNow');
+    // clique na versao = checar agora (util quando o check do boot falhou)
+    v.style.cursor = 'pointer';
+    v.onclick = async () => {
+      const r = await window.api.updateCheck();
+      if (!r.ok) setStatus('✗ ' + (r.key ? t(r.key) : r.message), 'err');
+    };
+    renderUpdate(s);
+  } catch (e) { /* sem updater: segue sem a pilula */ }
+}
+
 async function init() {
   bind();
   settings = await window.api.loadSettings();
@@ -490,6 +543,7 @@ async function init() {
   fillSettings();
   renderEnvs();
   await refreshCookieStatus();
+  await initUpdates();
   setStatus(t('status.ready'));
 }
 

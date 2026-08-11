@@ -688,8 +688,80 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
+// ---------------------------------------------------------------------------
+// Auto-update (electron-updater + GitHub Releases)
+// So funciona no app EMPACOTADO: em dev nao existe app-update.yml e o updater
+// lanca erro. O repo e publico, entao nao precisa de token.
+// O download roda em background e a troca acontece no proximo fechamento do app
+// (autoInstallOnAppQuit) - ou na hora, se o usuario clicar em "Reiniciar".
+// ---------------------------------------------------------------------------
+let updateState = { state: 'idle', version: null, percent: 0, message: null };
+let updater = null; // instancia do electron-updater; null em dev / se o require falhar
+
+function sendUpdate(patch) {
+  updateState = Object.assign({}, updateState, patch);
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:status', updateState);
+    }
+  } catch (e) { /* janela indo embora */ }
+}
+
+function initAutoUpdate() {
+  if (!app.isPackaged) {
+    updateState = { state: 'dev', version: app.getVersion(), percent: 0, message: null };
+    return;
+  }
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+  } catch (e) {
+    console.error('electron-updater indisponivel:', e);
+    sendUpdate({ state: 'error', message: String(e.message || e) });
+    return;
+  }
+  updater = autoUpdater;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => sendUpdate({ state: 'checking' }));
+  autoUpdater.on('update-not-available', () => sendUpdate({ state: 'current' }));
+  autoUpdater.on('update-available', (info) => sendUpdate({ state: 'downloading', version: info.version, percent: 0 }));
+  autoUpdater.on('download-progress', (p) => sendUpdate({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdate({ state: 'ready', version: info.version, percent: 100 }));
+  autoUpdater.on('error', (err) => {
+    // Sem rede / rate limit do GitHub / release sem latest.yml: nao e fatal,
+    // o app continua funcionando normalmente na versao atual.
+    console.error('Auto-update falhou:', err);
+    sendUpdate({ state: 'error', message: String((err && err.message) || err) });
+  });
+
+  // Espera a janela existir pra nao perder os eventos iniciais.
+  setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}); }, 3000);
+}
+
+// Handlers registrados SEMPRE (mesmo em dev, onde `updater` fica null): o
+// renderer chama sem saber se o app esta empacotado.
+ipcMain.handle('update:state', () => Object.assign({ appVersion: app.getVersion() }, updateState));
+
+ipcMain.handle('update:check', () => {
+  if (!updater) return { ok: false, key: 'be.updateDevMode' };
+  return updater.checkForUpdates().then(
+    () => ({ ok: true }),
+    (e) => ({ ok: false, message: String(e.message || e) })
+  );
+});
+
+ipcMain.handle('update:install', () => {
+  if (!updater) return { ok: false, key: 'be.updateDevMode' };
+  // Fora do handler: quitAndInstall derruba o app e o IPC junto.
+  setImmediate(() => updater.quitAndInstall());
+  return { ok: true };
+});
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdate();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

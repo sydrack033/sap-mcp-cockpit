@@ -122,6 +122,14 @@ const I18N = {
     'be.testNoPassword': '{0}: no password set for this On-Premise environment.',
     'be.testFail': '{0}: connection test failed. See the log.',
     'be.loggerNoNode': 'MCP logging skipped: no Node.js / VS Code runtime found to run the logger (servers were generated without the proxy).',
+    'be.updateDevMode': 'Auto-update only works in the installed app (not when running from source).',
+
+    'update.checking': 'Checking for updates…',
+    'update.downloading': 'Downloading {0} — {1}%',
+    'update.ready': 'Version {0} ready to install.',
+    'update.error': 'Update check failed — you are still on the current version.',
+    'update.restart': 'Restart now',
+    'update.checkNow': 'Click to check for updates',
 
     'pick.vsp': 'Select vsp.exe',
     'pick.browser': 'Select browser',
@@ -240,6 +248,14 @@ const I18N = {
     'be.testNoPassword': '{0}: sem senha definida para este ambiente On-Premise.',
     'be.testFail': '{0}: teste de conexão falhou. Veja o log.',
     'be.loggerNoNode': 'Logging MCP pulado: nenhum runtime Node.js / VS Code encontrado pra rodar o logger (servers gerados sem o proxy).',
+    'be.updateDevMode': 'Auto-update só funciona no app instalado (não rodando pelo código-fonte).',
+
+    'update.checking': 'Procurando atualizações…',
+    'update.downloading': 'Baixando {0} — {1}%',
+    'update.ready': 'Versão {0} pronta pra instalar.',
+    'update.error': 'Falha ao checar atualização — você segue na versão atual.',
+    'update.restart': 'Reiniciar agora',
+    'update.checkNow': 'Clique pra checar atualizações',
 
     'pick.vsp': 'Selecionar vsp.exe',
     'pick.browser': 'Selecionar navegador',

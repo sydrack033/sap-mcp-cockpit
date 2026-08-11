@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "node start.js",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win nsis --publish never"
   },
   "author": "Sydrack",
   "license": "MIT",
@@ -30,11 +30,26 @@
       "package.json"
     ],
     "win": {
-      "target": "portable",
+      "target": "nsis",
       "icon": "build/icon.ico"
     },
-    "portable": {
-      "artifactName": "SAPMCPCockpit-${version}-portable.exe"
-    }
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "SAPMCPCockpit-Setup-${version}.exe",
+      "shortcutName": "SAP MCP Cockpit",
+      "createDesktopShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sydrack033",
+        "repo": "sap-mcp-cockpit"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

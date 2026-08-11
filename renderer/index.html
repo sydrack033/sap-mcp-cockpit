@@ -111,7 +111,15 @@
   <!-- Status / log -->
   <footer class="statusbar">
     <span id="status">Ready.</span>
-    <button id="btn-log" class="btn btn-ghost btn-sm" data-i18n="log.view">View log</button>
+    <div class="status-right">
+      <!-- Auto-update: some quando nao ha nada a dizer (state 'idle'/'current'/'dev') -->
+      <span id="update-pill" class="update-pill hidden">
+        <span id="update-msg"></span>
+        <button id="btn-update-install" class="btn btn-sm hidden" data-i18n="update.restart">Restart now</button>
+      </span>
+      <span id="app-version" class="app-version" title="">—</span>
+      <button id="btn-log" class="btn btn-ghost btn-sm" data-i18n="log.view">View log</button>
+    </div>
   </footer>
 
   <!-- Modal de cadastro/edicao -->

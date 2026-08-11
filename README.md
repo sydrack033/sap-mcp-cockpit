@@ -162,19 +162,28 @@ git push --follow-tags
 ```
 > `npm version` atualiza o `package.json` e **cria a tag `vX.Y.Z`** sozinho.
 
-### 4. Gerar o `.exe` portátil (já com a versão nova)
+### 4. Gerar o instalador (já com a versão nova)
 ```powershell
 npm run dist
 ```
-Gera `..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-<versão>-portable.exe` (roda com duplo-clique, sem Node). A saída fica **fora** da pasta do projeto de propósito (evita o VSCode travar o `.exe` durante o build).
-> Feche qualquer portátil do Cockpit aberto antes do build, senão dá erro de arquivo travado.
+Gera dois arquivos em `..\..\sap-mcp-cockpit-dist\`:
 
-### 5. Publicar a Release no GitHub (com o `.exe` anexado)
-Troque a versão nos dois lugares (`v1.1.0` e o nome do arquivo):
+| Arquivo | Pra quê |
+|---|---|
+| `SAPMCPCockpit-Setup-<versão>.exe` | Instalador one-click, por usuário (`%LOCALAPPDATA%`, **sem admin**) |
+| `latest.yml` | **Metadado do auto-update** — versão + sha512 + nome do instalador |
+
+A saída fica **fora** da pasta do projeto de propósito (evita o VSCode travar o `.exe` durante o build).
+> Feche o Cockpit antes do build, senão dá erro de arquivo travado.
+
+### 5. Publicar a Release no GitHub (com o `.exe` **e o `latest.yml`**)
+> ⚠️ **O `latest.yml` é obrigatório.** É ele que o app instalado consulta pra saber que saiu versão nova. Release sem esse anexo = auto-update quebrado pra todo mundo que já instalou.
+
+Troque a versão nos três lugares:
 ```powershell
-gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "O que mudou nesta versão." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-1.1.0-portable.exe"
+gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "O que mudou nesta versão." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-Setup-1.1.0.exe" "..\..\sap-mcp-cockpit-dist\latest.yml"
 ```
-Conferir:
+Conferir (tem que listar os **dois** assets):
 ```powershell
 gh release view v1.1.0 --repo sydrack033/sap-mcp-cockpit
 ```
@@ -186,8 +195,24 @@ git checkout -b feature/x; git add -A; git commit -m "..."; git push -u origin f
 # (merge na main pelo PR, depois:)
 git checkout main; git pull; npm version minor; git push --follow-tags
 npm run dist
-gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "..." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-1.1.0-portable.exe"
+gh release create v1.1.0 --repo sydrack033/sap-mcp-cockpit --title "SAP MCP Cockpit v1.1.0" --notes "..." "..\..\sap-mcp-cockpit-dist\SAPMCPCockpit-Setup-1.1.0.exe" "..\..\sap-mcp-cockpit-dist\latest.yml"
 ```
+
+## Auto-update
+
+A partir da **v2.2.0** o app se atualiza sozinho: `electron-updater` + as Releases deste repositório (repo público, então não precisa de token).
+
+Como funciona:
+1. 3 segundos depois de abrir, o app consulta a release mais recente do GitHub.
+2. Se houver versão maior, baixa em background — a pílula na barra de status mostra o progresso.
+3. Quando termina, aparece **Reiniciar agora**. Quem ignorar leva a atualização no próximo fechamento do app (`autoInstallOnAppQuit`).
+
+Detalhes que importam:
+- **Só funciona no app instalado.** Rodando por `npm start` a pílula fica escondida e o botão de versão responde "só funciona no app instalado" — em dev não existe `app-update.yml`.
+- **Falha de rede não quebra nada**: o app segue na versão atual e mostra a pílula vermelha. Dá pra forçar uma nova checagem clicando na versão (`vX.Y.Z`) no canto da barra de status.
+- **Rate limit** do GitHub: 5000 req/hora por usuário, e cada checagem gasta até 3 — folgado pro uso real.
+- **Sem code signing**: o Windows/SmartScreen ainda avisa na primeira instalação. O update em si não exige assinatura no Windows (no macOS exigiria).
+- Os dados (`settings.json`/`clients.json`) ficam em `%APPDATA%/sap-mcp-cockpit/`, **fora** da pasta de instalação — atualizar não perde nada, e quem vinha do portable mantém tudo.
 
 > **Erro de symlink no `winCodeSign` durante o `npm run dist`?** O electron-builder baixa um pacote com symlinks de macOS que o Windows recusa sem Developer Mode/admin. Contorno: extrair o pacote no cache **sem a pasta `darwin`**:
 > ```powershell

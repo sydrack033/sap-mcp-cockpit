@@ -21,5 +21,12 @@ contextBridge.exposeInMainWorld('api', {
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),
   openVscode: (s)          => ipcRenderer.invoke('vscode:open', s),
-  openFolder: (s)          => ipcRenderer.invoke('folder:open', s)
+  openFolder: (s)          => ipcRenderer.invoke('folder:open', s),
+
+  // auto-update
+  updateState: ()          => ipcRenderer.invoke('update:state'),
+  updateCheck: ()          => ipcRenderer.invoke('update:check'),
+  updateInstall: ()        => ipcRenderer.invoke('update:install'),
+  // push do main -> renderer (checking / downloading / ready / error)
+  onUpdateStatus: (cb)     => ipcRenderer.on('update:status', (_evt, s) => cb(s))
 });

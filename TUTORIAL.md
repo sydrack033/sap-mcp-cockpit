@@ -24,8 +24,9 @@ Decida **qual assistente** vai usar e **instale a extensão no VSCode primeiro**
 
 ### 1.1 — SAP MCP Cockpit (este app)
 - Página de releases: **https://github.com/sydrack033/sap-mcp-cockpit/releases/latest**
-- Baixe o arquivo **`SAPMCPCockpit-1.0.0-portable.exe`**.
-- É **portátil**: roda com duplo-clique, **não precisa instalar nada** (nem Node).
+- Baixe o arquivo **`SAPMCPCockpit-Setup-<versão>.exe`**.
+- Duplo-clique **instala e abre** — leva alguns segundos e **não pede senha de administrador** (instala só pro seu usuário, em `%LOCALAPPDATA%`). Não precisa de Node.
+- Depois disso o app **se atualiza sozinho**: quando sair versão nova ele baixa em background e avisa na barra de status. Você só instala na mão uma vez.
 
 ### 1.2 — vsp, o motor (vibing-steampunk)
 - Página de releases: **https://github.com/oisee/vibing-steampunk/releases**
@@ -52,13 +53,13 @@ Passo a passo:
 2. **Mova** o vsp baixado pra dentro de `tools\` e **renomeie para `vsp.exe`** (tire o sufixo de versão/arquitetura do nome).
 3. Crie a pasta do seu workspace, ex.: `C:\Users\SEU_USUARIO\Projects\meu-sap\`. É aqui que o Cockpit vai escrever os arquivos de config e os cookies.
 
-> O `.exe` do **Cockpit** pode ficar onde você quiser (ex.: `Downloads` ou `Projects`). Ele não precisa estar dentro do workspace.
+> O **Cockpit** se instala sozinho no seu perfil — ele não precisa estar dentro do workspace, e depois de instalar você pode apagar o instalador que baixou.
 
 ---
 
 ## 3. Abrir o Cockpit e configurar (aba **Configurações**)
 
-Dê duplo-clique no **`SAPMCPCockpit-1.0.0-portable.exe`**. Na seção **Configurações** (topo):
+Abra o **SAP MCP Cockpit** (o instalador já abriu o app; depois ele fica no Menu Iniciar e num atalho na área de trabalho). Na seção **Configurações** (topo):
 
 1. **Caminho do vsp.exe** → **Procurar…** → selecione `C:\Users\SEU_USUARIO\Projects\tools\vsp.exe`.
 2. **Pasta do projeto (workspace)** → **Procurar…** → selecione a pasta `meu-sap` que você criou.
@@ -210,6 +211,7 @@ Troque `<profile>` pelo nome do seu ambiente (ex.: `acme-qas`).
 | Auth falhou / pediu senha (cloud) | Cookie SSO expirou → **Login SSO** de novo. |
 | `423 lock handle invalid` ao criar/editar objeto | Use **mode expert** + fluxo `LockObject→UpdateSource→Activate→UnlockObject`. Em **SAP ECC antigo** isso pode ser um limite do próprio vsp (sessão stateful do ADT). |
 | Windows bloqueou o `.exe` | SmartScreen → **Mais informações → Executar assim mesmo**. |
+| Pílula vermelha "Falha ao checar atualização" | Sem internet ou proxy bloqueando o GitHub. **Não atrapalha nada** — o app segue funcionando na versão atual. Clique na versão (`vX.Y.Z`) na barra de status pra tentar de novo. |
 
 ---
 
@@ -224,7 +226,7 @@ Troque `<profile>` pelo nome do seu ambiente (ex.: `acme-qas`).
 ## Apêndice — ordem rápida (cola)
 
 1. Instalar extensão do LLM no VSCode (Claude **ou** Codex) e logar.
-2. Baixar Cockpit (nosso release) + vsp (Windows amd64).
+2. Baixar e instalar o Cockpit (`SAPMCPCockpit-Setup-<versão>.exe`, sem admin) + baixar o vsp (Windows amd64).
 3. `Projects\tools\vsp.exe` (renomeado) + `Projects\meu-sap\` (workspace).
 4. Abrir Cockpit → Configurações: vsp.exe + pasta do projeto → **Salvar configurações**.
 5. **+ Novo ambiente** (Cloud/On-Prem, URL, client, **mode**) → **Salvar ambiente**.
