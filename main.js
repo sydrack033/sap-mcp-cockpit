@@ -37,8 +37,8 @@ const DEFAULT_SETTINGS = {
   project_path: '', // vazio de proposito: o usuario escolhe a pasta (placeholder mostra o exemplo)
   chrome_path: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   vscode_cmd: 'code',
-  claude_cmd: 'claude', // CLI do Claude Code; aceita caminho completo
-  codex_cmd: 'codex',   // CLI do Codex; aceita caminho completo
+  codex_cmd: 'codex', // CLI do Codex; aceita caminho completo
+  // Claude Code nao tem comando aqui: e o app desktop, aberto por claude://
   lang: 'en' // idioma da UI: 'en' (padrao) ou 'pt'
 };
 
@@ -888,11 +888,23 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
 // e RODAR a ferramenta com o cwd na pasta. Por isso as duas sobem num terminal
 // novo, e o VSCode nao.
 // ---------------------------------------------------------------------------
+// mode:
+//   folder   -> passa a pasta como argumento (`code <pasta>`)
+//   terminal -> sobe a CLI num terminal novo com cwd na pasta
+//   deeplink -> abre o app desktop pelo protocolo claude://
 const OPEN_TARGETS = {
-  vscode: { setting: 'vscode_cmd', fallback: 'code',   terminal: false, key: 'be.openedVscode', label: 'VSCode' },
-  claude: { setting: 'claude_cmd', fallback: 'claude', terminal: true,  key: 'be.openedClaude', label: 'Claude Code' },
-  codex:  { setting: 'codex_cmd',  fallback: 'codex',  terminal: true,  key: 'be.openedCodex',  label: 'Codex' }
+  vscode: { mode: 'folder',   setting: 'vscode_cmd', fallback: 'code',  key: 'be.openedVscode', label: 'VSCode' },
+  claude: { mode: 'deeplink',                                           key: 'be.openedClaude', label: 'Claude Code' },
+  codex:  { mode: 'terminal', setting: 'codex_cmd',  fallback: 'codex', key: 'be.openedCodex',  label: 'Codex' }
 };
+
+// Deep link do app desktop do Claude (documentado no suporte da Anthropic):
+//   claude://code/new?folder=<caminho absoluto url-encoded>
+// Abre a aba Code numa sessao nova apontando pra pasta. O proprio app pede
+// confirmacao da pasta antes de usar — por isso a mensagem de sucesso avisa.
+function claudeCodeUrl(dir) {
+  return 'claude://code/new?folder=' + encodeURIComponent(path.resolve(dir));
+}
 
 // Caminho explicito -> confere no disco. Nome solto -> procura no PATH.
 // Devolve null quando nao existe, pra UI poder mandar o usuario configurar.
@@ -930,6 +942,16 @@ ipcMain.handle('open:in', (_evt, payload) => {
       return;
     }
 
+    // Claude Code: nao e CLI, e o app desktop via protocolo claude://.
+    if (spec.mode === 'deeplink') {
+      shell.openExternal(claudeCodeUrl(projectPath)).then(
+        () => resolve({ ok: true, key: spec.key, args: [projectPath] }),
+        // cai aqui quando o protocolo nao esta registrado (app nao instalado)
+        (e) => resolve({ ok: false, key: 'be.openNoClaudeApp', args: [String((e && e.message) || e)] })
+      );
+      return;
+    }
+
     const wanted = settings[spec.setting] || spec.fallback;
     const cmd = resolveCommand(wanted);
     if (!cmd) {
@@ -939,7 +961,7 @@ ipcMain.handle('open:in', (_evt, payload) => {
 
     let proc;
     try {
-      proc = spec.terminal
+      proc = spec.mode === 'terminal'
         ? spawnTerminal(projectPath, cmd)
         // shell:true porque "code" no Windows e um .cmd
         : spawn(cmd, [projectPath], { cwd: projectPath, shell: true, detached: true, stdio: 'ignore' });

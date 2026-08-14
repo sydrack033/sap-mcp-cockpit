@@ -128,7 +128,6 @@ function fillSettings() {
   $('set-project').value = settings.project_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
-  $('set-claude').value  = settings.claude_cmd || 'claude';
   $('set-codex').value   = settings.codex_cmd || 'codex';
 }
 function readSettingsFromForm() {
@@ -136,7 +135,6 @@ function readSettingsFromForm() {
   settings.project_path = $('set-project').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
-  settings.claude_cmd   = $('set-claude').value.trim() || 'claude';
   settings.codex_cmd    = $('set-codex').value.trim() || 'codex';
 }
 

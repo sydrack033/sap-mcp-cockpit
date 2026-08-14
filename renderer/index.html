@@ -124,17 +124,11 @@
                 <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
               </div>
             </div>
-            <div class="grid2">
-              <div class="field">
-                <label data-i18n="settings.claude">Claude Code command</label>
-                <input id="set-claude" type="text" placeholder="claude" />
-              </div>
-              <div class="field">
-                <label data-i18n="settings.codex">Codex command</label>
-                <input id="set-codex" type="text" placeholder="codex" />
-              </div>
+            <div class="field">
+              <label data-i18n="settings.codex">Codex command</label>
+              <input id="set-codex" type="text" placeholder="codex" />
+              <p class="hint" data-i18n-html="settings.codex.hint">Codex is a CLI: <b>Open in</b> starts it in a new terminal at the project folder. Leave <code>codex</code> if it is on PATH, or point to the full path. <b>Claude Code</b> needs no command — it opens the desktop app.</p>
             </div>
-            <p class="hint" data-i18n-html="settings.cli.hint">Claude Code and Codex are CLIs: <b>Open in</b> starts them in a new terminal at the project folder. Leave the plain name if it is on PATH, or point to the full path.</p>
             <div class="row end">
               <button id="btn-save-settings" class="btn btn-sm btn-primary"
                 data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
