@@ -62,6 +62,7 @@ const I18N = {
 
     'conn.none': 'Pick a connection on the left, or create one with <b>+ Connection</b>.',
     'detail.flags': 'Flags',
+    'detail.noFolder': 'not set yet',
 
     'group.newTitle': 'New client',
     'group.newLabel': 'Client name (becomes a folder in the sidebar):',
@@ -248,6 +249,7 @@ const I18N = {
 
     'conn.none': 'Escolha uma conexão à esquerda, ou crie uma em <b>+ Conexão</b>.',
     'detail.flags': 'Flags',
+    'detail.noFolder': 'ainda não definida',
 
     'group.newTitle': 'Novo cliente',
     'group.newLabel': 'Nome do cliente (vira uma pasta na barra lateral):',

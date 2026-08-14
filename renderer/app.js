@@ -494,6 +494,8 @@ function renderDetail() {
     [lbl('f.user'), e.auth_type === 'onprem' ? (e.user || '—') : '—'],
     [lbl('f.mode'), e.mode || 'focused'],
     [lbl('f.lang'), e.language || '—'],
+    // a pasta decide onde vao a config e o cookie: merece estar visivel aqui
+    [lbl('f.folder'), folderOf(e.client_name) || t('detail.noFolder')],
     [lbl('detail.flags'), [
       e.read_only && t('f.readonly'),
       e.insecure && t('f.insecure'),
