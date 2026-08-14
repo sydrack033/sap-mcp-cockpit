@@ -1,4 +1,6 @@
-# Gera build/icon.ico (engrenagem steampunk) sem dependencias externas.
+# Gera build/icon.ico (engrenagem) sem dependencias externas.
+# As cores acompanham a paleta do renderer (renderer/style.css :root):
+# fundo --bg, gradiente da engrenagem --accent-hi -> --accent.
 # Desenha a engrenagem com System.Drawing em 256px, reamostra pros tamanhos
 # menores e empacota tudo num .ico com entradas PNG.
 Add-Type -AssemblyName System.Drawing
@@ -15,7 +17,7 @@ function New-GearBitmap([int]$size) {
   $cy = $s / 2.0
 
   # --- fundo: quadrado arredondado escuro ---
-  $bg   = [System.Drawing.Color]::FromArgb(255, 28, 23, 18)   # #1c1712
+  $bg   = [System.Drawing.Color]::FromArgb(255, 14, 17, 22)   # #0e1116  (--bg)
   $rad  = $s * 0.18
   $rect = New-Object System.Drawing.Drawing2D.GraphicsPath
   $d = $rad * 2.0
@@ -50,9 +52,9 @@ function New-GearBitmap([int]$size) {
   $gear.AddPolygon($pts.ToArray())
   $gear.CloseFigure()
 
-  # gradiente cobre (mesma paleta do app)
-  $c1 = [System.Drawing.Color]::FromArgb(255, 224, 149, 79)  # #e0954f
-  $c2 = [System.Drawing.Color]::FromArgb(255, 201, 123, 60)  # #c97b3c
+  # gradiente verde (mesma paleta do app)
+  $c1 = [System.Drawing.Color]::FromArgb(255, 95, 217, 130)  # #5fd982  (--accent-hi)
+  $c2 = [System.Drawing.Color]::FromArgb(255, 63, 191, 99)   # #3fbf63  (--accent)
   $grect = New-Object System.Drawing.RectangleF(0, 0, [single]$s, [single]$s)
   $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush($grect, $c1, $c2, 90.0)
   $g.FillPath($grad, $gear)
