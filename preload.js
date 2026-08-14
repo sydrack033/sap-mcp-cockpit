@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld('api', {
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),
-  openVscode: (s)          => ipcRenderer.invoke('vscode:open', s),
+  // abrir o projeto em: 'vscode' | 'claude' | 'codex'
+  openIn: (p)              => ipcRenderer.invoke('open:in', p),
   openFolder: (s)          => ipcRenderer.invoke('folder:open', s),
 
   // import do SAP GUI (SAPUILandscape.xml no AppData)

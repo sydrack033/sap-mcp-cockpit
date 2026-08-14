@@ -37,6 +37,8 @@ const DEFAULT_SETTINGS = {
   project_path: '', // vazio de proposito: o usuario escolhe a pasta (placeholder mostra o exemplo)
   chrome_path: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   vscode_cmd: 'code',
+  claude_cmd: 'claude', // CLI do Claude Code; aceita caminho completo
+  codex_cmd: 'codex',   // CLI do Codex; aceita caminho completo
   lang: 'en' // idioma da UI: 'en' (padrao) ou 'pt'
 };
 
@@ -878,20 +880,76 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
 });
 
 // Abrir a pasta do projeto no VSCode
-ipcMain.handle('vscode:open', (_evt, settings) => {
+// ---------------------------------------------------------------------------
+// Abrir o projeto em VSCode / Claude Code / Codex
+//
+// A diferenca importante: o VSCode ABRE UMA PASTA (`code <pasta>`), enquanto
+// Claude Code e Codex sao CLIs — nelas nao existe "abrir a pasta", o que existe
+// e RODAR a ferramenta com o cwd na pasta. Por isso as duas sobem num terminal
+// novo, e o VSCode nao.
+// ---------------------------------------------------------------------------
+const OPEN_TARGETS = {
+  vscode: { setting: 'vscode_cmd', fallback: 'code',   terminal: false, key: 'be.openedVscode', label: 'VSCode' },
+  claude: { setting: 'claude_cmd', fallback: 'claude', terminal: true,  key: 'be.openedClaude', label: 'Claude Code' },
+  codex:  { setting: 'codex_cmd',  fallback: 'codex',  terminal: true,  key: 'be.openedCodex',  label: 'Codex' }
+};
+
+// Caminho explicito -> confere no disco. Nome solto -> procura no PATH.
+// Devolve null quando nao existe, pra UI poder mandar o usuario configurar.
+function resolveCommand(value) {
+  const v = String(value || '').trim();
+  if (!v) return null;
+  if (/[\\/]/.test(v)) return fs.existsSync(v) ? v : null;
+  try {
+    const r = spawnSync('where', [v], { timeout: 5000 });
+    if (r.status === 0) return v;
+  } catch (e) { /* where indisponivel: cai no null */ }
+  return null;
+}
+
+// Abre um terminal novo ja na pasta e roda o comando. Usa o Windows Terminal
+// quando existe (melhor experiencia) e cai pro cmd quando nao.
+function spawnTerminal(dir, command) {
+  // se o usuario apontou um caminho com espaco, precisa ir entre aspas
+  const runner = /\s/.test(command) ? `"${command}"` : command;
+  const line = resolveCommand('wt')
+    ? `wt -d "${dir}" cmd /k ${runner}`
+    : `start "" cmd /k ${runner}`;
+  return spawn(line, { cwd: dir, shell: true, detached: true, stdio: 'ignore' });
+}
+
+ipcMain.handle('open:in', (_evt, payload) => {
   return new Promise((resolve) => {
+    const { settings, target } = payload || {};
+    const spec = OPEN_TARGETS[target];
+    if (!spec) { resolve({ ok: false, key: 'be.openUnknown', args: [String(target)] }); return; }
+
     const projectPath = settings.project_path;
     if (!projectPath || !fs.existsSync(projectPath)) {
       resolve({ ok: false, key: 'be.vscodeNoFolder' });
       return;
     }
-    const cmd = settings.vscode_cmd || 'code';
-    // shell:true porque "code" no Windows e um .cmd
-    const proc = spawn(cmd, [projectPath], { cwd: projectPath, shell: true, detached: true, stdio: 'ignore' });
-    proc.on('error', e => resolve({ ok: false, key: 'be.vscodeFail', args: [e.message] }));
-    // nao espera fechar
-    proc.unref();
-    setTimeout(() => resolve({ ok: true, key: 'be.vscodeOpened', args: [projectPath] }), 400);
+
+    const wanted = settings[spec.setting] || spec.fallback;
+    const cmd = resolveCommand(wanted);
+    if (!cmd) {
+      resolve({ ok: false, key: 'be.openNotFound', args: [wanted, spec.label] });
+      return;
+    }
+
+    let proc;
+    try {
+      proc = spec.terminal
+        ? spawnTerminal(projectPath, cmd)
+        // shell:true porque "code" no Windows e um .cmd
+        : spawn(cmd, [projectPath], { cwd: projectPath, shell: true, detached: true, stdio: 'ignore' });
+    } catch (e) {
+      resolve({ ok: false, key: 'be.openFail', args: [e.message] });
+      return;
+    }
+    proc.on('error', e => resolve({ ok: false, key: 'be.openFail', args: [e.message] }));
+    proc.unref(); // nao espera fechar
+    setTimeout(() => resolve({ ok: true, key: spec.key, args: [projectPath] }), 400);
   });
 });
 

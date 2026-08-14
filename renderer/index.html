@@ -42,8 +42,15 @@
       </div>
       <button id="btn-generate" class="btn btn-primary"
         data-i18n="btn.generate" data-i18n-title="btn.generate.title">Generate configs</button>
-      <button id="btn-vscode" class="btn"
-        data-i18n="btn.vscode" data-i18n-title="btn.vscode.title">Open in VSCode</button>
+      <div class="dropdown">
+        <button id="btn-open-in" class="btn"
+          data-i18n-title="btn.openIn.title"><span data-i18n="btn.openIn">Open in</span> ▾</button>
+        <div id="open-menu" class="menu hidden">
+          <button class="menu-item" data-open="vscode">VSCode</button>
+          <button class="menu-item" data-open="claude">Claude Code</button>
+          <button class="menu-item" data-open="codex">Codex</button>
+        </div>
+      </div>
       <button id="btn-folder" class="btn btn-ghost"
         data-i18n="btn.folder" data-i18n-title="btn.folder.title">Open folder</button>
     </div>
@@ -117,6 +124,17 @@
                 <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
               </div>
             </div>
+            <div class="grid2">
+              <div class="field">
+                <label data-i18n="settings.claude">Claude Code command</label>
+                <input id="set-claude" type="text" placeholder="claude" />
+              </div>
+              <div class="field">
+                <label data-i18n="settings.codex">Codex command</label>
+                <input id="set-codex" type="text" placeholder="codex" />
+              </div>
+            </div>
+            <p class="hint" data-i18n-html="settings.cli.hint">Claude Code and Codex are CLIs: <b>Open in</b> starts them in a new terminal at the project folder. Leave the plain name if it is on PATH, or point to the full path.</p>
             <div class="row end">
               <button id="btn-save-settings" class="btn btn-sm btn-primary"
                 data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>

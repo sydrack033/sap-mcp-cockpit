@@ -128,12 +128,16 @@ function fillSettings() {
   $('set-project').value = settings.project_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
+  $('set-claude').value  = settings.claude_cmd || 'claude';
+  $('set-codex').value   = settings.codex_cmd || 'codex';
 }
 function readSettingsFromForm() {
   settings.vsp_path     = $('set-vsp').value.trim();
   settings.project_path = $('set-project').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
+  settings.claude_cmd   = $('set-claude').value.trim() || 'claude';
+  settings.codex_cmd    = $('set-codex').value.trim() || 'codex';
 }
 
 async function saveSettings() {
@@ -647,13 +651,19 @@ async function generateConfigs() {
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killed, res.ok ? 'ok' : 'err');
 }
 
-async function openVscode() {
+const OPEN_LABELS = { vscode: 'VSCode', claude: 'Claude Code', codex: 'Codex' };
+
+async function openIn(target) {
+  closeOpenMenu();
   readSettingsFromForm();
   await window.api.saveSettings(settings);
-  setStatus(t('msg.openingVscode'));
-  const res = await window.api.openVscode(settings);
+  setStatus(t('msg.opening', OPEN_LABELS[target] || target));
+  const res = await window.api.openIn({ settings, target });
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
 }
+
+function closeOpenMenu() { $('open-menu').classList.add('hidden'); }
+function toggleOpenMenu() { $('open-menu').classList.toggle('hidden'); }
 
 async function openFolder() {
   readSettingsFromForm();
@@ -721,8 +731,16 @@ function bind() {
 
   // topbar
   $('btn-generate').onclick = generateConfigs;
-  $('btn-vscode').onclick   = openVscode;
   $('btn-folder').onclick   = openFolder;
+
+  // dropdown "Abrir em"
+  $('btn-open-in').onclick = (ev) => { ev.stopPropagation(); toggleOpenMenu(); };
+  document.querySelectorAll('#open-menu .menu-item').forEach(b => {
+    b.onclick = () => openIn(b.getAttribute('data-open'));
+  });
+  // fecha ao clicar fora ou apertar Esc
+  document.addEventListener('click', closeOpenMenu);
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeOpenMenu(); });
 
   // navegacao entre Conexoes e Configuracoes
   document.querySelectorAll('.nav-item').forEach(b => {
