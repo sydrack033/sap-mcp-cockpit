@@ -660,11 +660,16 @@ async function generateConfigs() {
 
   setStatus(t('msg.generating'));
   const res = await window.api.generateConfigs({ settings, clients });
-  // vspKilled: numero de processos derrubados; null = derrubou mas nao da pra contar (pkill)
-  let killed = '';
-  if (res.vspKilled === null) killed = ' — ' + t('msg.vspKilledSome');
-  else if (res.vspKilled > 0) killed = ' — ' + t('msg.vspKilled', res.vspKilled);
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killed, res.ok ? 'ok' : 'err');
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
+}
+
+// Sufixo do status contando os processos vsp derrubados.
+// vspKilled: numero derrubado; null = derrubou mas nao da pra contar (pkill).
+function killedNote(res) {
+  if (!res || !res.ok) return '';
+  if (res.vspKilled === null) return ' — ' + t('msg.vspKilledSome');
+  if (res.vspKilled > 0) return ' — ' + t('msg.vspKilled', res.vspKilled);
+  return '';
 }
 
 const OPEN_LABELS = { vscode: 'VSCode', claude: 'Claude Code', codex: 'Codex' };
@@ -696,7 +701,7 @@ async function generateGlobal(env, btn) {
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = t('card.globalWorking'); }
   const res = await window.api.generateGlobal({ settings, env });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
   if (btn) { btn.disabled = false; btn.textContent = label || t('card.global'); }
 }
 

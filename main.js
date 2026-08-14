@@ -408,11 +408,17 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     fs.writeFileSync(tmp, out, 'utf8');
     fs.renameSync(tmp, CLAUDE_GLOBAL); // atomico: nunca deixa o arquivo pela metade
 
+    // Mesmo motivo do "Gerar configs": o vsp que o host subiu segura a config
+    // antiga em memoria. Sem derrubar, atualizar um profile que ja era global
+    // nao teria efeito nenhum. Depois da escrita, pra nao respawnar no meio.
+    const vsp = killVspProcesses(settings);
+
     return {
       ok: true,
       key: existed ? 'be.globalUpdated' : 'be.globalAdded',
       args: [id, CLAUDE_GLOBAL],
-      profile: id
+      profile: id,
+      vspKilled: vsp.killed
     };
   } catch (e) {
     return { ok: false, key: 'be.globalFail', args: [e.message] };
