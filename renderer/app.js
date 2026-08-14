@@ -129,13 +129,11 @@ function fillSettings() {
   $('set-vsp').value     = settings.vsp_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
-  $('set-codex').value   = settings.codex_cmd || 'codex';
 }
 function readSettingsFromForm() {
   settings.vsp_path     = $('set-vsp').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
-  settings.codex_cmd    = $('set-codex').value.trim() || 'codex';
 }
 
 async function saveSettings() {
