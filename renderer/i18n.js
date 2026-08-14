@@ -61,6 +61,9 @@ const I18N = {
     'group.newLabel': 'Client name (becomes a folder in the sidebar):',
     'group.dup': 'Client "{0}" already exists.',
     'group.created': 'Client "{0}" created. Use + on the folder to add a connection.',
+    'group.createdWithFolder': 'Client "{0}" created at {1}.',
+    'group.folderIs': 'Workspace folder: {0} — click to change.',
+    'group.folderNone': 'No workspace folder — click to pick one.',
 
     'import.title': 'Import from SAP GUI',
     'import.search': 'Filter systems…',
@@ -107,6 +110,8 @@ const I18N = {
     'card.globalAgain': '✓ Global',
     'card.globalRemove': 'Remove global',
     'card.globalBadge': 'Registered in Claude Code global scope — works in any folder.',
+    'card.openInDir': 'Opens {0}',
+    'card.openInAsk': 'No folder set for {0} yet — you will be asked to pick one.',
     'card.globalWorking': 'Registering…',
     'card.globalInfo.title': 'What does Make global do?',
     'card.globalInfo': '<b>Registers <code>{0}</code> in Claude Code\'s global scope</b>, in <code>~/.claude.json</code> — outside the project folder.<ul><li>Today <b>Generate configs</b> writes <code>.mcp.json</code> <b>inside the project folder</b>, so this MCP only exists when Claude Code runs in that folder.</li><li>After this, the server shows up in <b>any folder</b>.</li><li>The connection is copied whole — URL, SAP client and the <b>absolute path</b> of the cookie/password, which keep pointing at the project folder.</li><li><b>Codex is already global</b> since Generate configs (it uses <code>~/.codex/config.toml</code>), so this changes nothing for it.</li><li>Only this connection is registered, and <b>restarting the MCP host</b> is required.</li></ul>',
@@ -135,6 +140,9 @@ const I18N = {
     'msg.vspKilled': '{0} stale vsp process(es) stopped — restart the MCP host.',
     'msg.vspKilledSome': 'Stale vsp processes stopped — restart the MCP host.',
     'msg.opening': 'Opening {0}…',
+    'msg.openingIn': 'Opening {0} at {1}…',
+    'msg.folderSet': 'Folder for {0}: {1}',
+    'msg.folderNeeded': 'Pick a folder for {0} to open it.',
     'err.loginNoProject': 'Set the project folder before logging in.',
     'msg.loginStart': 'SSO login for {0} — finish in the browser…',
 
@@ -187,6 +195,7 @@ const I18N = {
     'pick.vsp': 'Select vsp.exe',
     'pick.browser': 'Select browser',
     'pick.project': 'Select project folder',
+    'pick.clientFolder': 'Select the workspace folder for {0}',
     'file.exe': 'Executable',
     'file.all': 'All'
   },
@@ -240,6 +249,9 @@ const I18N = {
     'group.newLabel': 'Nome do cliente (vira uma pasta na barra lateral):',
     'group.dup': 'O cliente "{0}" já existe.',
     'group.created': 'Cliente "{0}" criado. Use o + na pasta pra adicionar uma conexão.',
+    'group.createdWithFolder': 'Cliente "{0}" criado em {1}.',
+    'group.folderIs': 'Pasta do workspace: {0} — clique pra trocar.',
+    'group.folderNone': 'Sem pasta de workspace — clique pra escolher.',
 
     'import.title': 'Importar do SAP GUI',
     'import.search': 'Filtrar sistemas…',
@@ -286,6 +298,8 @@ const I18N = {
     'card.globalAgain': '✓ Global',
     'card.globalRemove': 'Remover global',
     'card.globalBadge': 'Registrada no escopo global do Claude Code — vale em qualquer pasta.',
+    'card.openInDir': 'Abre {0}',
+    'card.openInAsk': 'Sem pasta definida para {0} ainda — vai pedir na hora.',
     'card.globalWorking': 'Registrando…',
     'card.globalInfo.title': 'O que o Gerar global faz?',
     'card.globalInfo': '<b>Registra <code>{0}</code> no escopo global do Claude Code</b>, em <code>~/.claude.json</code> — fora da pasta do projeto.<ul><li>Hoje o <b>Gerar configs</b> escreve o <code>.mcp.json</code> <b>dentro da pasta do projeto</b>, então esse MCP só existe quando o Claude Code roda naquela pasta.</li><li>Depois disso, o server aparece em <b>qualquer pasta</b>.</li><li>A conexão vai inteira — URL, client SAP e o <b>caminho absoluto</b> do cookie/senha, que continuam apontando pra pasta do projeto.</li><li>O <b>Codex já é global</b> desde o Gerar configs (usa o <code>~/.codex/config.toml</code>), então isso não muda nada pra ele.</li><li>Registra <b>só esta conexão</b>, e é preciso <b>reiniciar o host MCP</b>.</li></ul>',
@@ -314,6 +328,9 @@ const I18N = {
     'msg.vspKilled': '{0} processo(s) vsp antigo(s) encerrado(s) — reinicie o host MCP.',
     'msg.vspKilledSome': 'Processos vsp antigos encerrados — reinicie o host MCP.',
     'msg.opening': 'Abrindo {0}…',
+    'msg.openingIn': 'Abrindo {0} em {1}…',
+    'msg.folderSet': 'Pasta de {0}: {1}',
+    'msg.folderNeeded': 'Escolha uma pasta para {0} para poder abrir.',
     'err.loginNoProject': 'Defina a pasta do projeto antes do login.',
     'msg.loginStart': 'Login SSO de {0} — conclua no navegador…',
 
@@ -366,6 +383,7 @@ const I18N = {
     'pick.vsp': 'Selecionar vsp.exe',
     'pick.browser': 'Selecionar navegador',
     'pick.project': 'Selecionar pasta do projeto',
+    'pick.clientFolder': 'Selecionar a pasta de workspace de {0}',
     'file.exe': 'Executável',
     'file.all': 'Todos'
   }

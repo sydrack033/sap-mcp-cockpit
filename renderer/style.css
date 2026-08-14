@@ -360,6 +360,10 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 }
 .group-head:hover .group-add { opacity: 1; }
 .group-add:hover { color: var(--accent-hi); }
+/* a pasta fica sempre visivel quando ja esta definida: e informacao, nao acao */
+.group-folder { font-size: 12px; }
+.group-folder.set { opacity: .75; color: var(--accent); }
+.group-head:hover .group-folder.set { opacity: 1; }
 .group-items { padding-left: 8px; }
 
 /* -- item = conexao -- */

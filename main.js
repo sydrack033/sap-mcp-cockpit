@@ -1050,7 +1050,9 @@ ipcMain.handle('open:in', (_evt, payload) => {
     const spec = OPEN_TARGETS[target];
     if (!spec) { resolve({ ok: false, key: 'be.openUnknown', args: [String(target)] }); return; }
 
-    const projectPath = settings.project_path;
+    // projectPath explicito = pasta do cliente (Abrir em na conexao).
+    // Sem ele, cai na pasta padrao das Configuracoes (botao da topbar).
+    const projectPath = (payload && payload.projectPath) || settings.project_path;
     if (!projectPath || !fs.existsSync(projectPath)) {
       resolve({ ok: false, key: 'be.vscodeNoFolder' });
       return;

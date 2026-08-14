@@ -178,6 +178,35 @@ function findByIdx() {
   return (clients.environments || []).findIndex(e => profileId(e) === selectedId);
 }
 
+// ---------------------------------------------------------------------------
+// Pasta por cliente
+// Cada cliente pode ter a sua pasta de workspace (clients.folders, mapa
+// client_name -> caminho). Sem pasta definida, cai na pasta padrao das
+// Configuracoes — assim quem ja usava o app continua funcionando igual.
+// ---------------------------------------------------------------------------
+function folderOf(clientName) {
+  return (clients.folders && clients.folders[clientName]) || '';
+}
+
+async function setFolderOf(clientName, dir) {
+  if (!clients.folders) clients.folders = {};
+  if (dir) clients.folders[clientName] = dir;
+  else delete clients.folders[clientName];
+  await persistClients();
+}
+
+// Devolve a pasta do cliente, pedindo na primeira vez. '' = usuario cancelou.
+async function ensureFolder(clientName) {
+  const atual = folderOf(clientName);
+  if (atual) return atual;
+  const dir = await window.api.pickFolder({ title: t('pick.clientFolder', clientName) });
+  if (!dir) return '';
+  await setFolderOf(clientName, dir);
+  render();
+  setStatus(t('msg.folderSet', clientName, dir), 'ok');
+  return dir;
+}
+
 // Recolher/expandir todos de uma vez. Um botao so: se sobrou algum grupo
 // aberto, fecha tudo; se ja esta tudo fechado, abre tudo.
 function toggleAllGroups() {
@@ -249,7 +278,22 @@ function renderTree() {
       openModal(-1, { prefill: { client_name: g.name } });
     };
 
-    head.append(chev, nameEl, count, add);
+    // pasta do cliente: acende quando definida, e o title mostra o caminho
+    const dir = folderOf(g.name);
+    const fold = document.createElement('button');
+    fold.className = 'group-add group-folder' + (dir ? ' set' : '');
+    fold.textContent = '🗀';
+    fold.title = dir ? t('group.folderIs', dir) : t('group.folderNone');
+    fold.onclick = async (ev) => {
+      ev.stopPropagation(); // senao o clique tambem colapsa o grupo
+      const escolhida = await window.api.pickFolder({ title: t('pick.clientFolder', g.name || t('envs.noClient')) });
+      if (!escolhida) return;
+      await setFolderOf(g.name, escolhida);
+      render();
+      setStatus(t('msg.folderSet', g.name, escolhida), 'ok');
+    };
+
+    head.append(chev, nameEl, count, fold, add);
     head.onclick = () => {
       if (collapsed.has(g.name)) collapsed.delete(g.name); else collapsed.add(g.name);
       renderTree();
@@ -363,6 +407,29 @@ function renderDetail() {
     actions.appendChild(b);
     return b;
   };
+
+  // "Abrir em" da conexao: abre a pasta DO CLIENTE, nao a pasta padrao.
+  // Na primeira vez pede a pasta e guarda no cliente.
+  const openBox = document.createElement('span');
+  openBox.className = 'dropdown';
+  const oBtn = document.createElement('button');
+  oBtn.className = 'btn btn-sm';
+  oBtn.textContent = t('btn.openIn') + ' ▾';
+  const dir = folderOf(e.client_name);
+  oBtn.title = dir ? t('card.openInDir', dir) : t('card.openInAsk', e.client_name);
+  const menu = document.createElement('div');
+  menu.className = 'menu hidden';
+  for (const [target, label] of Object.entries(OPEN_LABELS)) {
+    const mi = document.createElement('button');
+    mi.className = 'menu-item';
+    mi.textContent = label;
+    mi.onclick = () => openConnIn(e, target);
+    menu.appendChild(mi);
+  }
+  oBtn.onclick = (ev) => { ev.stopPropagation(); closeMenus(menu); menu.classList.toggle('hidden'); };
+  openBox.append(oBtn, menu);
+  actions.appendChild(openBox);
+
   mk(t('card.test'), '', function () { doTest(e, this); });
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
@@ -461,7 +528,12 @@ async function newGroup() {
   clients.groups.push(name);
   await persistClients();
   render();
-  setStatus(t('group.created', name), 'ok');
+
+  // ja pergunta a pasta do cliente — opcional, da pra definir depois no grupo
+  const dir = await window.api.pickFolder({ title: t('pick.clientFolder', name) });
+  if (dir) await setFolderOf(name, dir);
+  render();
+  setStatus(dir ? t('group.createdWithFolder', name, dir) : t('group.created', name), 'ok');
 }
 
 // Duplicar: abre o MESMO modal, mas em modo "novo", ja preenchido com a conexao
@@ -701,8 +773,28 @@ async function openIn(target) {
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
 }
 
-function closeOpenMenu() { $('open-menu').classList.add('hidden'); }
-function toggleOpenMenu() { $('open-menu').classList.toggle('hidden'); }
+// Fecha todo menu aberto, menos o que estiver sendo alternado agora.
+function closeMenus(exceto) {
+  document.querySelectorAll('.menu').forEach(m => { if (m !== exceto) m.classList.add('hidden'); });
+}
+function closeOpenMenu() { closeMenus(); }
+function toggleOpenMenu() {
+  const m = $('open-menu');
+  closeMenus(m);
+  m.classList.toggle('hidden');
+}
+
+// Abrir em, a partir da conexao: usa a pasta do cliente (pedindo se faltar).
+async function openConnIn(env, target) {
+  closeMenus();
+  const dir = await ensureFolder(env.client_name);
+  if (!dir) { setStatus(t('msg.folderNeeded', env.client_name), 'warn'); return; }
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+  setStatus(t('msg.openingIn', OPEN_LABELS[target] || target, dir));
+  const res = await window.api.openIn({ settings, target, projectPath: dir });
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+}
 
 async function openFolder() {
   readSettingsFromForm();
