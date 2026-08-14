@@ -1,20 +1,47 @@
 :root {
-  --bg:        #1c1712;
-  --bg-soft:   #261f18;
-  --panel:     #2c241c;
-  --panel-2:   #322a20;
-  --line:      #463a2c;
-  --copper:    #c97b3c;
-  --copper-2:  #e0954f;
-  --brass:     #d9b06a;
-  --text:      #ece3d6;
-  --text-dim:  #a3937e;
-  --green:     #6fae6f;
-  --red:       #cd6b5a;
-  --radius:    10px;
+  /* Paleta verde Sydrack sobre fundo escuro azulado.
+     --accent* sao o verde da marca; --green fica so pra estado OK. */
+  --bg:          #0e1116;
+  --bg-soft:     #131820;
+  --panel:       #171d26;
+  --panel-2:     #1d2530;
+  --line:        #29323f;
+  --accent:      #3fbf63;
+  --accent-hi:   #5fd982;
+  --accent-soft: #8ce3a8;
+  --text:        #e6edf3;
+  --text-dim:    #8b97a6;
+  --green:       #4fc97a;
+  --red:         #f0716a;
+  --radius:      10px;
 }
 
 * { box-sizing: border-box; }
+
+/* ---------- Scrollbar ----------
+   A padrao do Chromium entra clara e chapada e briga com o tema escuro.
+   Trilha transparente + polegar quase na cor do fundo: da pra pegar, mas nao
+   chama atencao. Ganha vida so no hover.
+
+   ATENCAO a ordem de precedencia: o Chromium do Electron 31 ja implementa o
+   PADRAO `scrollbar-color`/`scrollbar-width`, e quando `scrollbar-color` esta
+   definido ele IGNORA os pseudo-elementos ::-webkit-scrollbar-*. Entao quem
+   manda de fato aqui e a linha do `*`; os blocos webkit ficam de fallback
+   (e valem se um dia o scrollbar-color sair daqui). */
+* { scrollbar-width: thin; scrollbar-color: var(--panel-2) transparent; }
+*:hover { scrollbar-color: var(--line) transparent; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-button { display: none; } /* tira as setinhas das pontas */
+::-webkit-scrollbar-thumb {
+  background: var(--panel-2);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--line); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 html, body {
   margin: 0;
@@ -37,17 +64,17 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  background: linear-gradient(180deg, #2e251c, #241d16);
+  background: linear-gradient(180deg, #161d26, #10151c);
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand .gear {
   font-size: 34px;
-  color: var(--copper-2);
+  color: var(--accent-hi);
   animation: spin 12s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.brand h1 { margin: 0; font-size: 18px; letter-spacing: .5px; color: var(--brass); }
+.brand h1 { margin: 0; font-size: 18px; letter-spacing: .5px; color: var(--accent-soft); }
 .brand .sub { margin: 0; font-size: 12px; color: var(--text-dim); }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
@@ -76,7 +103,7 @@ body {
 .flag.active {
   opacity: 1;
   filter: none;
-  border-color: var(--copper-2);
+  border-color: var(--accent-hi);
   transform: scale(1.05);
 }
 
@@ -93,11 +120,11 @@ body {
   cursor: pointer;
   transition: color .12s, background .12s, border-color .12s;
 }
-.nav-item:hover { color: var(--text); background: rgba(201,123,60,.08); }
+.nav-item:hover { color: var(--text); background: rgba(63,191,99,.08); }
 .nav-item.active {
-  color: var(--copper-2);
-  border-color: var(--copper);
-  background: rgba(201,123,60,.14);
+  color: var(--accent-hi);
+  border-color: var(--accent);
+  background: rgba(63,191,99,.14);
 }
 
 /* ---------- Workspace: sidebar + conteudo ---------- */
@@ -125,7 +152,7 @@ body {
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--brass);
+  color: var(--accent-soft);
 }
 .sidebar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .sidebar-actions .btn { flex: 1; white-space: nowrap; }
@@ -159,7 +186,7 @@ body {
   user-select: none;
 }
 .panel-head.static { cursor: default; }
-.panel-head h2 { margin: 0; font-size: 15px; color: var(--brass); font-weight: 600; }
+.panel-head h2 { margin: 0; font-size: 15px; color: var(--accent-soft); font-weight: 600; }
 .panel-head .chev { color: var(--text-dim); transition: transform .15s; }
 .panel-head.collapsed .chev { transform: rotate(-90deg); }
 .panel-body { padding: 16px; }
@@ -169,8 +196,8 @@ body {
   display: inline-block;
   min-width: 22px;
   text-align: center;
-  background: var(--copper);
-  color: #1c1712;
+  background: var(--accent);
+  color: #08130c;
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 12px;
@@ -201,7 +228,7 @@ input[type=text], input[type=password], select {
   outline: none;
 }
 input[type=text]:focus, input[type=password]:focus, select:focus {
-  border-color: var(--copper);
+  border-color: var(--accent);
 }
 
 /* ---------- Buttons ---------- */
@@ -216,20 +243,20 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   transition: all .12s;
   white-space: nowrap;
 }
-.btn:hover { border-color: var(--copper); }
+.btn:hover { border-color: var(--accent); }
 .btn-primary {
-  background: linear-gradient(180deg, var(--copper-2), var(--copper));
-  border-color: var(--copper);
-  color: #1c1712;
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+  border-color: var(--accent);
+  color: #08130c;
   font-weight: 600;
 }
 .btn-primary:hover { filter: brightness(1.08); }
 .btn-ghost { background: transparent; }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
 .btn-ok {
-  background: linear-gradient(180deg, #7cc07c, var(--green));
+  background: linear-gradient(180deg, #7ce6a2, var(--green));
   border-color: var(--green);
-  color: #14240f;
+  color: #08130c;
   font-weight: 600;
 }
 .btn-ok:hover { border-color: var(--green); filter: brightness(1.08); }
@@ -256,12 +283,12 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   border-radius: 6px;
   cursor: pointer;
   user-select: none;
-  color: var(--brass);
+  color: var(--accent-soft);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: .3px;
 }
-.group-head:hover { background: rgba(201,123,60,.10); }
+.group-head:hover { background: rgba(63,191,99,.10); }
 .group-head .chev { color: var(--text-dim); font-size: 10px; transition: transform .15s; }
 .group.collapsed .chev { transform: rotate(-90deg); }
 .group.collapsed .group-items { display: none; }
@@ -279,7 +306,7 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   transition: opacity .12s, color .12s;
 }
 .group-head:hover .group-add { opacity: 1; }
-.group-add:hover { color: var(--copper-2); }
+.group-add:hover { color: var(--accent-hi); }
 .group-items { padding-left: 8px; }
 
 /* -- item = conexao -- */
@@ -294,8 +321,8 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 }
 .conn:hover { background: rgba(255,255,255,.04); }
 .conn.selected {
-  background: rgba(201,123,60,.16);
-  border-left-color: var(--copper-2);
+  background: rgba(63,191,99,.16);
+  border-left-color: var(--accent-hi);
 }
 .conn-name {
   flex: 1;
@@ -308,13 +335,13 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 .conn.selected .conn-name { color: var(--text); }
 /* bolinha de tipo/estado: cloud logado fica verde */
 .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.dot.onprem { background: var(--brass); }
+.dot.onprem { background: var(--accent-soft); }
 .dot.cloud  { background: #8fcde8; }
 .dot.ok     { background: var(--green); }
 
 /* ---------- Detalhe da conexao ---------- */
 .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.detail-head h2 { margin: 0 0 4px; font-size: 18px; color: var(--brass); }
+.detail-head h2 { margin: 0 0 4px; font-size: 18px; color: var(--accent-soft); }
 .detail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .detail-grid {
   display: grid;
@@ -328,7 +355,7 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 /* ---------- Lista do import (SAP GUI) ---------- */
 .import-list { max-height: 46vh; overflow-y: auto; margin-top: 10px; }
 .import-group {
-  color: var(--brass);
+  color: var(--accent-soft);
   font-size: 12px;
   font-weight: 600;
   padding: 10px 4px 4px;
@@ -343,7 +370,7 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   border-radius: 6px;
   cursor: pointer;
 }
-.import-item:hover { background: rgba(201,123,60,.12); }
+.import-item:hover { background: rgba(63,191,99,.12); }
 .import-item .meta { font-size: 11px; color: var(--text-dim); font-family: Consolas, monospace; }
 
 .tag {
@@ -354,10 +381,10 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   border-radius: 999px;
   text-transform: uppercase;
 }
-.tag.cloud  { background: #2f4a5c; color: #8fcde8; }
-.tag.onprem { background: #4a3a2a; color: var(--brass); }
-.tag.ro     { background: #4a2f2f; color: #e89b8f; }
-.profile-id { font-family: Consolas, monospace; color: var(--copper-2); font-size: 12px; }
+.tag.cloud  { background: #21384a; color: #8fcde8; }
+.tag.onprem { background: #1e3a29; color: var(--accent-soft); }
+.tag.ro     { background: #422a2a; color: #f0a89e; }
+.profile-id { font-family: Consolas, monospace; color: var(--accent-hi); font-size: 12px; }
 
 .empty { color: var(--text-dim); text-align: center; padding: 14px; }
 .empty.hidden { display: none; }
@@ -370,7 +397,7 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 0 4px;
-  color: var(--copper-2);
+  color: var(--accent-hi);
 }
 
 /* ---------- Checks / segmented ---------- */
@@ -387,10 +414,10 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   cursor: pointer;
   font-size: 13px;
 }
-.seg-opt input { accent-color: var(--copper); }
+.seg-opt input { accent-color: var(--accent); }
 .checks { display: flex; flex-direction: column; gap: 8px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
-.check input { accent-color: var(--copper); width: 16px; height: 16px; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
 
 hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 
@@ -407,7 +434,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 }
 .statusbar.ok   { color: var(--green); }
 .statusbar.err  { color: var(--red); }
-.statusbar.warn { color: var(--copper-2); }
+.statusbar.warn { color: var(--accent-hi); }
 
 /* animacao basica da mensagem de status (fade + slide ao aparecer) */
 @keyframes statusFlash {
@@ -425,14 +452,14 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
   align-items: center;
   gap: 8px;
   padding: 3px 10px;
-  border: 1px solid var(--copper);
+  border: 1px solid var(--accent);
   border-radius: 999px;
-  background: rgba(201,123,60,.12);
-  color: var(--copper-2);
+  background: rgba(63,191,99,.12);
+  color: var(--accent-hi);
   font-size: 11px;
 }
-.update-pill.ready { border-color: var(--green); color: var(--green); background: rgba(111,174,111,.12); }
-.update-pill.err   { border-color: var(--red);   color: var(--red);   background: rgba(205,107,90,.12); }
+.update-pill.ready { border-color: var(--green); color: var(--green); background: rgba(79,201,122,.12); }
+.update-pill.err   { border-color: var(--red);   color: var(--red);   background: rgba(240,113,106,.12); }
 .update-pill.hidden { display: none; }
 #btn-update-install.hidden { display: none; }
 
@@ -465,7 +492,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
   padding: 14px 18px;
   background: var(--panel-2);
 }
-.modal-head h3 { margin: 0; color: var(--brass); font-size: 16px; }
+.modal-head h3 { margin: 0; color: var(--accent-soft); font-size: 16px; }
 .modal-foot { gap: 8px; justify-content: flex-end; }
 .modal-body { padding: 18px; overflow-y: auto; }
 .onprem.hidden { display: none; }
@@ -476,13 +503,13 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 #confirm-cancel.hidden { display: none; }
 
 .logbox {
-  background: #0f0c09;
+  background: #080b0f;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   font-family: Consolas, monospace;
   font-size: 12px;
-  color: #cdbfa8;
+  color: #b6c2cf;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 60vh;

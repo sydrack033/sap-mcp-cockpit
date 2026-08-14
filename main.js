@@ -551,7 +551,7 @@ function createWindow() {
     minWidth: 820,
     minHeight: 600,
     title: 'SAP MCP Cockpit',
-    backgroundColor: '#1c1712',
+    backgroundColor: '#0e1116', // igual ao --bg do renderer: evita flash claro no boot
     icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
