@@ -159,6 +159,15 @@
         </div>
 
         <div class="field">
+          <label data-i18n="f.folder">Workspace folder</label>
+          <div class="row">
+            <input id="f-folder" type="text" data-i18n-ph="f.folder.ph" placeholder="C:/Users/You/Projects/client" />
+            <button class="btn btn-sm" data-pick="folder" data-i18n="browse">Browse…</button>
+          </div>
+          <p class="hint" id="f-folder-hint" data-i18n-html="f.folder.hint">The folder belongs to the <b>client</b>: every connection of this client shares it.</p>
+        </div>
+
+        <div class="field">
           <label data-i18n="f.auth">Authentication type</label>
           <div class="seg">
             <label class="seg-opt">

@@ -611,6 +611,10 @@ function openModal(idx, opts) {
   $('f-transp-edit').checked = e ? (e.allow_transportable_edits !== false) : true;
   $('f-transp').checked      = e ? (e.enable_transports !== false) : true;
 
+  // a pasta e do CLIENTE, nao da conexao: mostra a que ja existe pra ele
+  $('f-folder').value = folderOf($('f-client').value.trim());
+  syncFolderHint();
+
   setAuthType((e && e.auth_type) || 'onprem');
   $('modal').classList.remove('hidden');
 
@@ -619,6 +623,30 @@ function openModal(idx, opts) {
 }
 
 function closeModal() { $('modal').classList.add('hidden'); }
+
+// Trocar o cliente no formulario troca a pasta mostrada: ela pertence ao
+// cliente, entao digitar outro nome tem que refletir a pasta DELE.
+function onClientChanged() {
+  const cliente = $('f-client').value.trim();
+  const atual = $('f-folder').value.trim();
+  const doCliente = folderOf(cliente);
+  // so sobrescreve se o campo estiver vazio ou com a pasta de outro cliente —
+  // senao apagaria uma pasta que o usuario acabou de escolher a mao
+  if (!atual || Object.values(clients.folders || {}).includes(atual)) {
+    $('f-folder').value = doCliente;
+  }
+  syncFolderHint();
+}
+
+// Avisa quantas outras conexoes do mesmo cliente compartilham essa pasta.
+function syncFolderHint() {
+  const cliente = $('f-client').value.trim();
+  const irmas = (clients.environments || [])
+    .filter(x => x.client_name === cliente && profileId(x) !== selectedId).length;
+  $('f-folder-hint').innerHTML = irmas
+    ? t('f.folder.shared', cliente, irmas)
+    : t('f.folder.hint');
+}
 
 async function saveEnv() {
   const authType = currentAuthType();
@@ -666,6 +694,12 @@ async function saveEnv() {
   }
   // o cliente agora tem conexao: sai da lista de grupos vazios
   if (clients.groups) clients.groups = clients.groups.filter(g => g !== e.client_name);
+
+  // a pasta do formulario e a do CLIENTE — vale pras outras conexoes dele tambem
+  const pasta = $('f-folder').value.trim();
+  if (!clients.folders) clients.folders = {};
+  if (pasta) clients.folders[e.client_name] = pasta;
+  else delete clients.folders[e.client_name];
 
   selectedId = id; // abre a conexao recem-salva no detalhe
   await persistClients();
@@ -902,6 +936,10 @@ async function pick(kind) {
   } else if (kind === 'chrome') {
     const p = await window.api.pickFile({ title: t('pick.browser'), filters: exeFilters });
     if (p) $('set-chrome').value = p;
+  } else if (kind === 'folder') {
+    const cliente = $('f-client').value.trim();
+    const p = await window.api.pickFolder({ title: t('pick.clientFolder', cliente || '…') });
+    if (p) $('f-folder').value = p;
   }
 }
 
@@ -952,6 +990,7 @@ function bind() {
   document.querySelectorAll('input[name=auth]').forEach(r => {
     r.onchange = () => setAuthType(currentAuthType());
   });
+  $('f-client').oninput = onClientChanged;
 
   // log
   $('btn-log').onclick = () => showLog(lastLog);
