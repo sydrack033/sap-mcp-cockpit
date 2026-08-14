@@ -177,11 +177,11 @@
           <div class="seg">
             <label class="seg-opt">
               <input type="radio" name="auth" value="onprem" checked />
-              <span data-i18n="auth.onprem">On-Premise (basic auth)</span>
+              <span data-i18n="auth.onprem">Private</span>
             </label>
             <label class="seg-opt">
               <input type="radio" name="auth" value="cloud" />
-              <span data-i18n="auth.cloud">Cloud (SSO SAML / cookie)</span>
+              <span data-i18n="auth.cloud">Public</span>
             </label>
           </div>
         </div>
@@ -213,7 +213,7 @@
             <input id="f-insecure" type="checkbox" />
             <span data-i18n="f.insecure">Self-signed certificate server (--insecure)</span>
           </label>
-          <p class="hint" data-i18n="f.insecure.hint">Most on-premise servers use a self-signed certificate — keep this on unless you know the cert is valid.</p>
+          <p class="hint" data-i18n="f.insecure.hint">Most private servers use a self-signed certificate — keep this on unless you know the cert is valid.</p>
         </div>
 
         <hr />
