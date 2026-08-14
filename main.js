@@ -729,6 +729,18 @@ function initAutoUpdate() {
 
   // Espera a janela existir pra nao perder os eventos iniciais.
   setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}); }, 3000);
+
+  // E repete de tempos em tempos. Sem isso, so a checagem do boot existia: um
+  // app deixado aberto nunca descobria versao nova — bastava a release sair
+  // alguns segundos depois de abrir pra ele ficar cego ate o proximo restart.
+  // Uma vez a cada 6h e folgado no rate limit do GitHub (5000 req/h, ~3 por
+  // checagem) e nao atrapalha quem deixa o Cockpit aberto o dia todo.
+  setInterval(() => {
+    // 'ready' = download ja terminou e so falta reiniciar; checar de novo so
+    // reiniciaria o ciclo a toa
+    if (updateState.state === 'downloading' || updateState.state === 'ready') return;
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 6 * 60 * 60 * 1000);
 }
 
 // Handlers registrados SEMPRE (mesmo em dev, onde `updater` fica null): o
