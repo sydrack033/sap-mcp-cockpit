@@ -48,6 +48,8 @@ const I18N = {
     'envs.noMatch': 'Nothing matches your search.',
     'envs.noClient': '(no client)',
     'envs.addTo': 'New connection in {0}',
+    'envs.collapseAll': 'Collapse all clients',
+    'envs.expandAll': 'Expand all clients',
 
     'conn.none': 'Pick a connection on the left, or create one with <b>+ Connection</b>.',
     'detail.flags': 'Flags',
@@ -202,6 +204,8 @@ const I18N = {
     'envs.noMatch': 'Nada corresponde à busca.',
     'envs.noClient': '(sem cliente)',
     'envs.addTo': 'Nova conexão em {0}',
+    'envs.collapseAll': 'Recolher todos os clientes',
+    'envs.expandAll': 'Expandir todos os clientes',
 
     'conn.none': 'Escolha uma conexão à esquerda, ou crie uma em <b>+ Conexão</b>.',
     'detail.flags': 'Flags',

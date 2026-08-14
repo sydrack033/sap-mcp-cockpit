@@ -175,6 +175,27 @@ function findByIdx() {
   return (clients.environments || []).findIndex(e => profileId(e) === selectedId);
 }
 
+// Recolher/expandir todos de uma vez. Um botao so: se sobrou algum grupo
+// aberto, fecha tudo; se ja esta tudo fechado, abre tudo.
+function toggleAllGroups() {
+  const names = groupedEnvs().map(g => g.name);
+  const anyOpen = names.some(n => !collapsed.has(n));
+  collapsed.clear();
+  if (anyOpen) for (const n of names) collapsed.add(n);
+  renderTree();
+}
+
+// Deixa o botao mostrando a acao que ele VAI fazer, nao o estado atual.
+function syncToggleAll() {
+  const btn = $('btn-toggle-all');
+  if (!btn) return;
+  const names = groupedEnvs().map(g => g.name);
+  const willCollapse = names.some(n => !collapsed.has(n));
+  btn.textContent = willCollapse ? '⊟' : '⊞';
+  btn.title = t(willCollapse ? 'envs.collapseAll' : 'envs.expandAll');
+  btn.disabled = !names.length;
+}
+
 function renderTree() {
   const tree = $('env-tree');
   const all = clients.environments || [];
@@ -264,6 +285,8 @@ function renderTree() {
   } else {
     empty.classList.add('hidden');
   }
+
+  syncToggleAll();
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +739,7 @@ function bind() {
   $('btn-new').onclick       = () => openModal(-1);
   $('btn-new-group').onclick = newGroup;
   $('btn-import').onclick    = openImport;
+  $('btn-toggle-all').onclick = toggleAllGroups;
   $('env-search').oninput    = renderTree;
 
   // import

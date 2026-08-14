@@ -154,6 +154,12 @@ body {
   font-weight: 600;
   color: var(--accent-soft);
 }
+.sidebar-toggle {
+  margin-left: auto;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
 .sidebar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .sidebar-actions .btn { flex: 1; white-space: nowrap; }
 /* a arvore rola sozinha; o resto da sidebar fica fixo */
