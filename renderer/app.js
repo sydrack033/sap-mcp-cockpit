@@ -4,9 +4,12 @@
 // Estado
 // ---------------------------------------------------------------------------
 let settings = {};
-let clients = { environments: [] };
+let clients = { environments: [], groups: [] };
 let editIndex = -1; // -1 = novo
-const loggedIn = new Set(); // profile ids com login SSO OK nesta sessao
+const loggedIn = new Set();     // profile ids com login SSO OK nesta sessao
+let selectedId = null;          // profile id da conexao aberta no detalhe
+const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
+let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -22,7 +25,7 @@ async function changeLang(lang) {
   window.i18n.setLang(lang);
   settings.lang = window.i18n.getLang();
   await window.api.saveSettings(settings);
-  renderEnvs();
+  render();
   renderUpdate(); // a pilula de update e montada em JS, o data-i18n nao a alcanca
   if (!$('modal').classList.contains('hidden')) {
     $('modal-title').textContent = (editIndex >= 0) ? t('modal.edit') : t('modal.new');
@@ -68,16 +71,19 @@ function showLog(text) {
 // Electron no Windows). Este dialogo e 100% HTML, entao o foco nunca sai do
 // webContents. Retorna Promise<boolean> (OK=true, Cancelar/fechar=false).
 // ---------------------------------------------------------------------------
-function appDialog({ message, title, okText, cancelText, showCancel }) {
+function appDialog({ message, title, okText, cancelText, showCancel, prompt }) {
   return new Promise((resolve) => {
     const modal = $('confirmmodal');
     $('confirm-title').textContent = title || '';
     $('confirm-msg').textContent = message || '';
     const okBtn = $('confirm-ok');
     const cancelBtn = $('confirm-cancel');
+    const input = $('confirm-input');
     okBtn.textContent = okText || t('dlg.ok');
     cancelBtn.textContent = cancelText || t('dlg.cancel');
     cancelBtn.classList.toggle('hidden', !showCancel);
+    input.classList.toggle('hidden', !prompt);
+    input.value = '';
 
     let done = false;
     const close = (val) => {
@@ -86,7 +92,8 @@ function appDialog({ message, title, okText, cancelText, showCancel }) {
       document.removeEventListener('keydown', onKey, true);
       modal.classList.add('hidden');
       okBtn.onclick = cancelBtn.onclick = modal.onclick = null;
-      resolve(val);
+      // no modo prompt, OK devolve o texto digitado (vazio = cancelou)
+      resolve(prompt ? (val ? input.value.trim() : '') : val);
     };
     // Enter confirma; Esc cancela (num alert, ambos apenas fecham).
     const onKey = (ev) => {
@@ -99,7 +106,7 @@ function appDialog({ message, title, okText, cancelText, showCancel }) {
     document.addEventListener('keydown', onKey, true);
 
     modal.classList.remove('hidden');
-    okBtn.focus();
+    if (prompt) $('confirm-input').focus(); else okBtn.focus();
   });
 }
 function appAlert(message, title) {
@@ -107,6 +114,10 @@ function appAlert(message, title) {
 }
 function appConfirm(message, title) {
   return appDialog({ message, title: title || t('dlg.confirm'), showCancel: true });
+}
+// Devolve o texto digitado, ou '' se cancelou.
+function appPrompt(title, message) {
+  return appDialog({ message, title, showCancel: true, prompt: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -132,105 +143,229 @@ async function saveSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Render lista de ambientes
+// Navegacao entre as views (Conexoes / Configuracoes)
 // ---------------------------------------------------------------------------
-function renderEnvs() {
-  const list = $('env-list');
+function switchView(name) {
+  document.querySelectorAll('.nav-item').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-view') === name);
+  });
+  $('view-conns').classList.toggle('hidden', name !== 'conns');
+  $('view-settings').classList.toggle('hidden', name !== 'settings');
+}
+
+// ---------------------------------------------------------------------------
+// Arvore de conexoes: um grupo por cliente.
+// Os grupos saem do proprio client_name das conexoes; clients.groups guarda so
+// os clientes criados a mao que ainda nao tem conexao nenhuma (senao eles
+// sumiriam da arvore ate a primeira conexao existir).
+// ---------------------------------------------------------------------------
+function groupedEnvs() {
+  const map = new Map();
+  const get = (name) => {
+    if (!map.has(name)) map.set(name, { name, items: [] });
+    return map.get(name);
+  };
+  for (const g of (clients.groups || [])) get(g);
+  (clients.environments || []).forEach((e, idx) => get(e.client_name || '').items.push({ e, idx }));
+  return [...map.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+function findByIdx() {
+  return (clients.environments || []).findIndex(e => profileId(e) === selectedId);
+}
+
+function renderTree() {
+  const tree = $('env-tree');
   const all = clients.environments || [];
-  list.innerHTML = '';
+  tree.innerHTML = '';
   $('env-count').textContent = all.length;
 
-  // filtro de busca (cliente / ambiente / url / profile)
   const q = ($('env-search') && $('env-search').value || '').trim().toLowerCase();
   const matches = (e) => !q ||
     `${e.client_name} ${e.env_name} ${e.url || ''} ${profileId(e)}`.toLowerCase().includes(q);
 
   let shown = 0;
-  // itera sobre a lista COMPLETA pra preservar o indice real (usado em editar/remover)
-  all.forEach((e, idx) => {
-    if (!matches(e)) return;
-    shown++;
-    const card = document.createElement('div');
-    card.className = 'env-card';
+  for (const g of groupedEnvs()) {
+    // com filtro ativo, o nome do cliente tambem conta como match do grupo todo
+    const groupHit = q && g.name.toLowerCase().includes(q);
+    const items = g.items.filter(({ e }) => groupHit || matches(e));
+    if (q && !items.length) continue; // grupo sem nada a mostrar some da busca
 
-    const info = document.createElement('div');
-    info.className = 'info';
+    const box = document.createElement('div');
+    box.className = 'group';
+    // durante a busca os grupos abrem sozinhos, senao o resultado ficaria escondido
+    if (collapsed.has(g.name) && !q) box.classList.add('collapsed');
 
-    const title = document.createElement('div');
-    title.className = 'title';
-    const b = document.createElement('b');
-    b.textContent = `${e.client_name} · ${e.env_name}`;
-    title.appendChild(b);
+    const head = document.createElement('div');
+    head.className = 'group-head';
 
-    const tag = document.createElement('span');
-    tag.className = 'tag ' + (e.auth_type === 'cloud' ? 'cloud' : 'onprem');
-    tag.textContent = e.auth_type === 'cloud' ? t('tag.cloud') : t('tag.onprem');
-    title.appendChild(tag);
+    const chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.textContent = '▼';
 
-    if (e.read_only) {
-      const ro = document.createElement('span');
-      ro.className = 'tag ro';
-      ro.textContent = t('tag.ro');
-      title.appendChild(ro);
+    const nameEl = document.createElement('span');
+    nameEl.className = 'group-name';
+    nameEl.textContent = g.name || t('envs.noClient');
+
+    const count = document.createElement('span');
+    count.className = 'pill';
+    count.textContent = g.items.length;
+
+    const add = document.createElement('button');
+    add.className = 'group-add';
+    add.textContent = '+';
+    add.title = t('envs.addTo', g.name || t('envs.noClient'));
+    add.onclick = (ev) => {
+      ev.stopPropagation(); // senao o clique tambem colapsa o grupo
+      openModal(-1, { prefill: { client_name: g.name } });
+    };
+
+    head.append(chev, nameEl, count, add);
+    head.onclick = () => {
+      if (collapsed.has(g.name)) collapsed.delete(g.name); else collapsed.add(g.name);
+      renderTree();
+    };
+
+    const itemsBox = document.createElement('div');
+    itemsBox.className = 'group-items';
+    for (const { e, idx } of items) {
+      shown++;
+      const id = profileId(e);
+      const row = document.createElement('div');
+      row.className = 'conn' + (id === selectedId ? ' selected' : '');
+
+      const dot = document.createElement('span');
+      dot.className = 'dot ' + (e.auth_type === 'cloud'
+        ? (loggedIn.has(id) ? 'ok' : 'cloud')
+        : 'onprem');
+
+      const label = document.createElement('span');
+      label.className = 'conn-name';
+      label.textContent = e.env_name;
+      label.title = `${id} · ${e.url || ''}`;
+
+      row.append(dot, label);
+      row.onclick = () => selectEnv(idx);
+      itemsBox.appendChild(row);
     }
 
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.innerHTML = `<span class="profile-id">${profileId(e)}</span> &middot; ${t('meta.client')} ${e.sap_client || '?'} &middot; ${e.url || ''}`;
+    box.append(head, itemsBox);
+    tree.appendChild(box);
+  }
 
-    info.appendChild(title);
-    info.appendChild(meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-
-    if (e.auth_type === 'cloud') {
-      const loginBtn = document.createElement('button');
-      loginBtn.className = 'btn btn-sm';
-      if (loggedIn.has(profileId(e))) {
-        loginBtn.classList.add('btn-ok');
-        loginBtn.textContent = t('card.loginOk');
-      } else {
-        loginBtn.textContent = t('card.login');
-      }
-      loginBtn.onclick = () => doLogin(e, loginBtn);
-      actions.appendChild(loginBtn);
-    }
-
-    const testBtn = document.createElement('button');
-    testBtn.className = 'btn btn-sm';
-    testBtn.textContent = t('card.test');
-    testBtn.onclick = () => doTest(e, testBtn);
-    actions.appendChild(testBtn);
-
-    const editBtn = document.createElement('button');
-    editBtn.className = 'btn btn-sm';
-    editBtn.textContent = t('card.edit');
-    editBtn.onclick = () => openModal(idx);
-    actions.appendChild(editBtn);
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-ghost';
-    delBtn.textContent = t('card.remove');
-    delBtn.onclick = () => removeEnv(idx);
-    actions.appendChild(delBtn);
-
-    card.appendChild(info);
-    card.appendChild(actions);
-    list.appendChild(card);
-  });
-
-  // mensagem de vazio: nada cadastrado vs busca sem resultado
   const empty = $('env-empty');
-  if (all.length === 0) {
+  if (!all.length && !(clients.groups || []).length) {
     empty.innerHTML = t('envs.empty');
     empty.classList.remove('hidden');
-  } else if (shown === 0) {
+  } else if (q && !shown) {
     empty.textContent = t('envs.noMatch');
     empty.classList.remove('hidden');
   } else {
     empty.classList.add('hidden');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Detalhe da conexao selecionada (painel da direita)
+// ---------------------------------------------------------------------------
+function selectEnv(idx) {
+  const e = (clients.environments || [])[idx];
+  selectedId = e ? profileId(e) : null;
+  switchView('conns');
+  render();
+}
+
+function renderDetail() {
+  const box = $('conn-detail');
+  const none = $('conn-none');
+  box.innerHTML = '';
+
+  const idx = findByIdx();
+  const e = idx >= 0 ? clients.environments[idx] : null;
+  if (!e) {
+    none.innerHTML = t('conn.none');
+    none.classList.remove('hidden');
+    return;
+  }
+  none.classList.add('hidden');
+
+  const id = profileId(e);
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+
+  const head = document.createElement('div');
+  head.className = 'panel-head static detail-head';
+
+  const titleBox = document.createElement('div');
+  const h = document.createElement('h2');
+  h.textContent = `${e.client_name} · ${e.env_name}`;
+  const sub = document.createElement('span');
+  sub.className = 'profile-id';
+  sub.textContent = id;
+  titleBox.append(h, sub);
+
+  const actions = document.createElement('div');
+  actions.className = 'detail-actions';
+
+  if (e.auth_type === 'cloud') {
+    const loginBtn = document.createElement('button');
+    loginBtn.className = 'btn btn-sm' + (loggedIn.has(id) ? ' btn-ok' : '');
+    loginBtn.textContent = loggedIn.has(id) ? t('card.loginOk') : t('card.login');
+    loginBtn.onclick = () => doLogin(e, loginBtn);
+    actions.appendChild(loginBtn);
+  }
+
+  const mk = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-sm' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.onclick = fn;
+    actions.appendChild(b);
+    return b;
+  };
+  mk(t('card.test'), '', function () { doTest(e, this); });
+  mk(t('card.edit'), '', () => openModal(idx));
+  mk(t('card.duplicate'), '', () => duplicateEnv(idx));
+  mk(t('card.remove'), 'btn-ghost', () => removeEnv(idx));
+
+  head.append(titleBox, actions);
+
+  const body = document.createElement('div');
+  body.className = 'panel-body';
+  const dl = document.createElement('dl');
+  dl.className = 'detail-grid';
+  // os rotulos vem do formulario, onde o " *" marca campo obrigatorio; aqui e
+  // so leitura, entao o asterisco sai
+  const lbl = (key) => t(key).replace(/\s*\*$/, '');
+  const rows = [
+    [lbl('f.auth'), e.auth_type === 'cloud' ? t('auth.cloud') : t('auth.onprem')],
+    [lbl('f.url'), e.url || '—'],
+    [lbl('f.sapclient'), e.sap_client || '—'],
+    [lbl('f.user'), e.auth_type === 'onprem' ? (e.user || '—') : '—'],
+    [lbl('f.mode'), e.mode || 'focused'],
+    [lbl('f.lang'), e.language || '—'],
+    [lbl('detail.flags'), [
+      e.read_only && t('f.readonly'),
+      e.insecure && t('f.insecure'),
+      e.allow_transportable_edits && t('f.transpedit'),
+      e.enable_transports && t('f.transp')
+    ].filter(Boolean).join(' · ') || '—']
+  ];
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    dl.append(dt, dd);
+  }
+  body.appendChild(dl);
+
+  panel.append(head, body);
+  box.appendChild(panel);
+}
+
+function render() {
+  renderTree();
+  renderDetail();
 }
 
 async function persistClients() {
@@ -240,10 +375,51 @@ async function persistClients() {
 async function removeEnv(idx) {
   const e = clients.environments[idx];
   if (!(await appConfirm(t('confirm.remove', `${e.client_name} · ${e.env_name}`)))) return;
+  const wasSelected = profileId(e) === selectedId;
+  // mantem o cliente como grupo vazio, senao ele sumiria ao remover a ultima conexao
+  const client = e.client_name;
   clients.environments.splice(idx, 1);
+  if (client && !clients.environments.some(x => x.client_name === client)) {
+    if (!clients.groups) clients.groups = [];
+    if (!clients.groups.includes(client)) clients.groups.push(client);
+  }
+  if (wasSelected) selectedId = null;
   await persistClients();
-  renderEnvs();
+  render();
   setStatus(t('msg.envRemoved'), 'ok');
+}
+
+// Cria um cliente (grupo) vazio, pra poder pendurar conexoes nele depois.
+async function newGroup() {
+  const name = await appPrompt(t('group.newTitle'), t('group.newLabel'));
+  if (!name) return;
+  if (!clients.groups) clients.groups = [];
+  const exists = clients.groups.some(g => slug(g) === slug(name)) ||
+    (clients.environments || []).some(e => slug(e.client_name) === slug(name));
+  if (exists) { appAlert(t('group.dup', name)); return; }
+  clients.groups.push(name);
+  await persistClients();
+  render();
+  setStatus(t('group.created', name), 'ok');
+}
+
+// Duplicar: abre o MESMO modal, mas em modo "novo", ja preenchido com a conexao
+// de origem. O nome do ambiente ganha um sufixo livre pra nao colidir o profile
+// id — que e a chave do server MCP e nao pode repetir.
+function duplicateEnv(idx) {
+  const src = clients.environments[idx];
+  if (!src) return;
+  const copy = Object.assign({}, src, { env_name: uniqueEnvName(src.client_name, src.env_name) });
+  openModal(-1, { prefill: copy, focus: 'f-env' });
+  setStatus(t('msg.duplicating', `${src.client_name} · ${src.env_name}`));
+}
+
+function uniqueEnvName(client, base) {
+  const taken = (name) => (clients.environments || [])
+    .some(e => profileId(e) === slug(client) + '-' + slug(name));
+  let name = `${base} ${t('card.copySuffix')}`;
+  for (let n = 2; taken(name); n++) name = `${base} ${t('card.copySuffix')} ${n}`;
+  return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,26 +433,35 @@ function currentAuthType() {
   return document.querySelector('input[name=auth]:checked').value;
 }
 
-function openModal(idx) {
+// idx >= 0 edita; idx = -1 cria. `opts.prefill` alimenta o formulario sem sair
+// do modo "novo" — e o que faz duplicar, importar do SAP GUI e "+" no grupo
+// reaproveitarem este mesmo modal.
+function openModal(idx, opts) {
   editIndex = (typeof idx === 'number') ? idx : -1;
-  const e = editIndex >= 0 ? clients.environments[editIndex] : null;
+  const o = opts || {};
+  const e = editIndex >= 0 ? clients.environments[editIndex] : (o.prefill || null);
+  const isNew = editIndex < 0;
 
-  $('modal-title').textContent = e ? t('modal.edit') : t('modal.new');
-  $('f-client').value    = e ? e.client_name : '';
-  $('f-env').value       = e ? e.env_name : '';
-  $('f-url').value       = e ? e.url : '';
+  $('modal-title').textContent = isNew ? t('modal.new') : t('modal.edit');
+  $('f-client').value    = e ? (e.client_name || '') : '';
+  $('f-env').value       = e ? (e.env_name || '') : '';
+  $('f-url').value       = e ? (e.url || '') : '';
   $('f-sapclient').value = e ? (e.sap_client || '') : '100';
   $('f-user').value      = e ? (e.user || '') : '';
   $('f-pass').value      = e ? (e.password || '') : '';
-  $('f-insecure').checked = e ? !!e.insecure : true; // on-prem self-signed e a regra → liga por padrao
+  // on-prem self-signed e a regra → liga por padrao em conexao nova
+  $('f-insecure').checked = e ? !!e.insecure : true;
   $('f-mode').value      = e ? (e.mode || 'focused') : 'focused';
   $('f-lang').value      = e ? (e.language || '') : '';
   $('f-readonly').checked    = e ? !!e.read_only : false;
-  $('f-transp-edit').checked = e ? !!e.allow_transportable_edits : true;
-  $('f-transp').checked      = e ? !!e.enable_transports : true;
+  $('f-transp-edit').checked = e ? (e.allow_transportable_edits !== false) : true;
+  $('f-transp').checked      = e ? (e.enable_transports !== false) : true;
 
-  setAuthType(e ? e.auth_type : 'onprem');
+  setAuthType((e && e.auth_type) || 'onprem');
   $('modal').classList.remove('hidden');
+
+  const focus = $(o.focus || (e && e.client_name ? 'f-env' : 'f-client'));
+  if (focus) { focus.focus(); if (focus.select) focus.select(); }
 }
 
 function closeModal() { $('modal').classList.add('hidden'); }
@@ -325,10 +510,100 @@ async function saveEnv() {
   } else {
     clients.environments.push(e);
   }
+  // o cliente agora tem conexao: sai da lista de grupos vazios
+  if (clients.groups) clients.groups = clients.groups.filter(g => g !== e.client_name);
+
+  selectedId = id; // abre a conexao recem-salva no detalhe
   await persistClients();
-  renderEnvs();
+  render();
   closeModal();
   setStatus(t('msg.envSaved', id), 'ok');
+}
+
+// ---------------------------------------------------------------------------
+// Import do SAP GUI (SAPUILandscape.xml)
+// O arquivo so tem conexao DIAG: nao existe URL HTTP nem mandante ali. Dai o
+// import preencher cliente/ambiente/URL sugerida e mandar o usuario conferir no
+// formulario, em vez de gravar direto.
+// ---------------------------------------------------------------------------
+async function openImport() {
+  setStatus(t('import.loading'));
+  const res = await window.api.sapLandscape();
+  if (!res.ok) { setStatus('✗ ' + msgOf(res), 'err'); return; }
+  landscapeCache = res;
+  $('import-source').textContent = t('import.source', res.file, res.count);
+  $('import-search').value = '';
+  renderImport();
+  $('importmodal').classList.remove('hidden');
+  $('import-search').focus();
+  setStatus(t('status.ready'));
+}
+
+function renderImport() {
+  const box = $('import-list');
+  box.innerHTML = '';
+  if (!landscapeCache) return;
+  const q = ($('import-search').value || '').trim().toLowerCase();
+
+  let shown = 0;
+  for (const g of landscapeCache.groups) {
+    const hit = (s) => !q ||
+      `${g.name} ${s.name} ${s.systemid} ${s.server}`.toLowerCase().includes(q);
+    const items = g.services.filter(hit);
+    if (!items.length) continue;
+
+    const gh = document.createElement('div');
+    gh.className = 'import-group';
+    gh.textContent = `${g.name || t('envs.noClient')} (${items.length})`;
+    box.appendChild(gh);
+
+    for (const s of items) {
+      shown++;
+      const row = document.createElement('div');
+      row.className = 'import-item';
+
+      const left = document.createElement('div');
+      const name = document.createElement('div');
+      name.textContent = s.name;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${s.systemid || '?'} · ${s.server}` + (s.router ? ` · router ${s.router}` : '');
+      left.append(name, meta);
+
+      const url = document.createElement('span');
+      url.className = 'meta';
+      url.textContent = s.url || t('import.noUrl');
+
+      row.append(left, url);
+      row.onclick = () => pickImport(g, s);
+      box.appendChild(row);
+    }
+  }
+  if (!shown) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = t('envs.noMatch');
+    box.appendChild(p);
+  }
+}
+
+function pickImport(group, svc) {
+  $('importmodal').classList.add('hidden');
+  openModal(-1, {
+    prefill: {
+      client_name: group.name || '',
+      env_name: svc.name || svc.systemid || '',
+      auth_type: 'onprem',
+      url: svc.url || '',
+      sap_client: '',
+      insecure: true
+    },
+    focus: 'f-sapclient' // o mandante e o campo que o arquivo do SAP nao tem
+  });
+  // a URL e derivada da porta DIAG por convencao (32NN -> 80NN): avisa pra conferir
+  setStatus(svc.url
+    ? t('import.check', svc.server, svc.url)
+    : t('import.noPort', svc.server), 'warn');
 }
 
 // ---------------------------------------------------------------------------
@@ -426,24 +701,29 @@ function bind() {
   $('btn-vscode').onclick   = openVscode;
   $('btn-folder').onclick   = openFolder;
 
+  // navegacao entre Conexoes e Configuracoes
+  document.querySelectorAll('.nav-item').forEach(b => {
+    b.onclick = () => switchView(b.getAttribute('data-view'));
+  });
+
   // settings
   $('btn-save-settings').onclick = saveSettings;
   document.querySelectorAll('[data-pick]').forEach(btn => {
     btn.onclick = () => pick(btn.getAttribute('data-pick'));
   });
 
-  // collapse settings panel
-  document.querySelectorAll('.panel-head[data-toggle]').forEach(h => {
-    h.onclick = () => {
-      const body = $(h.getAttribute('data-toggle'));
-      body.classList.toggle('hidden');
-      h.classList.toggle('collapsed');
-    };
-  });
+  // conexoes
+  $('btn-new').onclick       = () => openModal(-1);
+  $('btn-new-group').onclick = newGroup;
+  $('btn-import').onclick    = openImport;
+  $('env-search').oninput    = renderTree;
 
-  // env
-  $('btn-new').onclick = () => openModal(-1);
-  $('env-search').oninput = renderEnvs;
+  // import
+  $('import-search').oninput = renderImport;
+  $('importmodal-close').onclick = () => $('importmodal').classList.add('hidden');
+  $('importmodal').addEventListener('click', (ev) => {
+    if (ev.target === $('importmodal')) $('importmodal').classList.add('hidden');
+  });
 
   // modal
   $('modal-close').onclick  = closeModal;
@@ -475,7 +755,7 @@ async function refreshCookieStatus() {
     for (const [id, has] of Object.entries(status || {})) {
       if (has) loggedIn.add(id); else loggedIn.delete(id);
     }
-    renderEnvs();
+    render();
   } catch (e) { /* ignora */ }
 }
 
@@ -538,7 +818,7 @@ async function init() {
   if (!clients.environments) clients.environments = [];
   window.i18n.setLang(settings.lang || 'en'); // ingles por padrao
   fillSettings();
-  renderEnvs();
+  render();
   await refreshCookieStatus();
   await initUpdates();
   setStatus(t('status.ready'));

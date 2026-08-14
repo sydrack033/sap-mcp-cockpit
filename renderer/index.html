@@ -15,6 +15,10 @@
         <p class="sub" data-i18n="sub">SAP environments &middot; vsp &middot; Claude Code / Codex</p>
       </div>
     </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="conns" data-i18n="nav.conns">Connections</button>
+      <button class="nav-item" data-view="settings" data-i18n="nav.settings">Settings</button>
+    </nav>
     <div class="topbar-actions">
       <div class="lang-flags">
         <button class="flag" data-lang="en" title="English" aria-label="English">
@@ -45,63 +49,80 @@
     </div>
   </header>
 
-  <main>
-    <!-- Configuracoes globais -->
-    <section class="panel">
-      <div class="panel-head" data-toggle="settings-body">
-        <h2 data-i18n="settings.title">Settings</h2>
-        <span class="chev">▾</span>
+  <div class="workspace">
+    <!-- Sidebar: conexoes agrupadas por cliente -->
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-title">
+          <span data-i18n="envs.title">Connections</span>
+          <span id="env-count" class="pill">0</span>
+        </div>
+        <input id="env-search" type="text" class="env-search"
+          data-i18n-ph="envs.search" placeholder="Filter…" />
+        <div class="sidebar-actions">
+          <button id="btn-new" class="btn btn-sm btn-primary" data-i18n="envs.new">+ Connection</button>
+          <button id="btn-new-group" class="btn btn-sm" data-i18n="envs.newGroup"
+            data-i18n-title="envs.newGroup.title">+ Client</button>
+          <button id="btn-import" class="btn btn-sm" data-i18n="envs.import"
+            data-i18n-title="envs.import.title">Import</button>
+        </div>
       </div>
-      <div class="panel-body" id="settings-body">
-        <div class="field">
-          <label data-i18n="settings.vsp">Path to vsp.exe</label>
-          <div class="row">
-            <input id="set-vsp" type="text" placeholder="C:/.../tools/vsp.exe" />
-            <button class="btn btn-sm" data-pick="vsp" data-i18n="browse">Browse…</button>
+      <div id="env-tree" class="env-tree"></div>
+      <p id="env-empty" class="empty" data-i18n-html="envs.empty">No connection yet. Click <b>+ Connection</b>.</p>
+    </aside>
+
+    <main class="content">
+      <!-- View: detalhe da conexao selecionada -->
+      <section id="view-conns" class="view">
+        <div id="conn-detail"></div>
+        <p id="conn-none" class="empty" data-i18n-html="conn.none">Pick a connection on the left.</p>
+      </section>
+
+      <!-- View: configuracoes do app -->
+      <section id="view-settings" class="view hidden">
+        <div class="panel">
+          <div class="panel-head static">
+            <h2 data-i18n="settings.title">Settings</h2>
           </div>
-        </div>
-        <div class="field">
-          <label data-i18n="settings.project">Project folder (single workspace)</label>
-          <div class="row">
-            <input id="set-project" type="text" data-i18n-ph="settings.project.ph" placeholder="e.g.: C:/Users/YourUser/Projects/sap-workspace" />
-            <button class="btn btn-sm" data-pick="project" data-i18n="browse">Browse…</button>
-          </div>
-          <p class="hint" data-i18n-html="settings.project.hint">Folder where the config files will be generated. Use <b>Browse…</b> or type the path.</p>
-        </div>
-        <div class="grid2">
-          <div class="field">
-            <label data-i18n="settings.chrome">Chrome path (browser-auth)</label>
-            <div class="row">
-              <input id="set-chrome" type="text" placeholder="C:/Program Files/Google/Chrome/Application/chrome.exe" />
-              <button class="btn btn-sm" data-pick="chrome" data-i18n="browse">Browse…</button>
+          <div class="panel-body">
+            <div class="field">
+              <label data-i18n="settings.vsp">Path to vsp.exe</label>
+              <div class="row">
+                <input id="set-vsp" type="text" placeholder="C:/.../tools/vsp.exe" />
+                <button class="btn btn-sm" data-pick="vsp" data-i18n="browse">Browse…</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="settings.project">Project folder (single workspace)</label>
+              <div class="row">
+                <input id="set-project" type="text" data-i18n-ph="settings.project.ph" placeholder="e.g.: C:/Users/YourUser/Projects/sap-workspace" />
+                <button class="btn btn-sm" data-pick="project" data-i18n="browse">Browse…</button>
+              </div>
+              <p class="hint" data-i18n-html="settings.project.hint">Folder where the config files will be generated. Use <b>Browse…</b> or type the path.</p>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label data-i18n="settings.chrome">Chrome path (browser-auth)</label>
+                <div class="row">
+                  <input id="set-chrome" type="text" placeholder="C:/Program Files/Google/Chrome/Application/chrome.exe" />
+                  <button class="btn btn-sm" data-pick="chrome" data-i18n="browse">Browse…</button>
+                </div>
+              </div>
+              <div class="field">
+                <label data-i18n="settings.vscode">VSCode command</label>
+                <input id="set-vscode" type="text" placeholder="code" />
+                <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
+              </div>
+            </div>
+            <div class="row end">
+              <button id="btn-save-settings" class="btn btn-sm btn-primary"
+                data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
             </div>
           </div>
-          <div class="field">
-            <label data-i18n="settings.vscode">VSCode command</label>
-            <input id="set-vscode" type="text" placeholder="code" />
-            <p class="hint" data-i18n-html="settings.vscode.hint">Command that opens VSCode. Leave <code>code</code> if it's on PATH; otherwise point to <code>Code.exe</code>.</p>
-          </div>
         </div>
-        <div class="row end">
-          <button id="btn-save-settings" class="btn btn-sm btn-primary"
-            data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Ambientes -->
-    <section class="panel">
-      <div class="panel-head static">
-        <h2><span data-i18n="envs.title">Environments</span> <span id="env-count" class="pill">0</span></h2>
-        <button id="btn-new" class="btn btn-sm btn-primary" data-i18n="envs.new">+ New environment</button>
-      </div>
-      <div class="panel-body">
-        <input id="env-search" type="text" class="env-search" data-i18n-ph="envs.search" placeholder="Filter environments…" />
-        <div id="env-list" class="env-list"></div>
-        <p id="env-empty" class="empty" data-i18n-html="envs.empty">No environment registered yet. Click <b>+ New environment</b>.</p>
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
+  </div>
 
   <!-- Status / log -->
   <footer class="statusbar">
@@ -220,6 +241,22 @@
     </div>
   </div>
 
+  <!-- Import do SAP GUI: arvore do SAPUILandscape.xml (pasta = cliente) -->
+  <div id="importmodal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 data-i18n="import.title">Import from SAP GUI</h3>
+        <button id="importmodal-close" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" id="import-source"></p>
+        <input id="import-search" type="text" class="env-search"
+          data-i18n-ph="import.search" placeholder="Filter systems…" />
+        <div id="import-list" class="import-list"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Dialogo in-app (alert / confirm). Substitui window.alert / window.confirm:
        os dialogs NATIVOS do Electron roubam o foco do teclado e, ao fechar, os
        inputs param de aceitar digitacao ate reiniciar o app. Em HTML nao ha esse bug. -->
@@ -230,6 +267,7 @@
       </div>
       <div class="modal-body">
         <p id="confirm-msg" class="dlg-msg"></p>
+        <input id="confirm-input" type="text" class="hidden" />
       </div>
       <div class="modal-foot">
         <button id="confirm-cancel" class="btn btn-ghost">Cancel</button>

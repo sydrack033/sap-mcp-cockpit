@@ -347,6 +347,103 @@ function killVspProcesses(settings) {
 }
 
 // ---------------------------------------------------------------------------
+// Import do SAP GUI: %APPDATA%/SAP/Common/SAPUILandscape.xml
+// Estrutura do arquivo: Workspace > Node (a pasta, que na pratica e o cliente)
+// > Item(serviceid) -> Service (a conexao). Routers ficam a parte, referenciados
+// por routerid.
+//
+// ATENCAO ao que o arquivo NAO tem: os Services sao type="SAPGUI" (DIAG), logo
+// nao ha URL HTTP nem mandante — o SAP GUI so pergunta o client no logon. Por
+// isso o import preenche o que da e o usuario completa no formulario.
+// ---------------------------------------------------------------------------
+const SAP_LANDSCAPE = path.join(
+  process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+  'SAP', 'Common', 'SAPUILandscape.xml'
+);
+
+function decodeXml(s) {
+  return String(s || '')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function xmlAttrs(tag) {
+  const out = {};
+  for (const m of tag.matchAll(/([\w:.-]+)\s*=\s*"([^"]*)"/g)) out[m[1]] = decodeXml(m[2]);
+  return out;
+}
+
+// A porta DIAG do SAP GUI e 32<instancia> (3202 -> instancia 02). A porta HTTP
+// do ICM e, por CONVENCAO, 80<instancia>. Convencao, nao garantia: o Basis pode
+// ter publicado o ICM em outra porta ou so em HTTPS (443<instancia>). A URL vai
+// pro formulario como sugestao — quem confirma e o usuario.
+function deriveHttpUrl(server) {
+  const m = String(server || '').match(/^([^:]+):(\d+)$/);
+  if (!m) return { host: String(server || ''), instance: null, url: '' };
+  const [, host, port] = m;
+  const instance = /^32(\d\d)$/.test(port) ? port.slice(2) : null;
+  return { host, diagPort: port, instance, url: instance ? `http://${host}:80${instance}` : '' };
+}
+
+function parseLandscape(xml) {
+  const routers = {};
+  for (const m of xml.matchAll(/<Router\b[^>]*\/>/g)) {
+    const a = xmlAttrs(m[0]);
+    if (a.uuid) routers[a.uuid] = a.router || a.name || '';
+  }
+
+  const services = {};
+  for (const m of xml.matchAll(/<Service\b[^>]*\/>/g)) {
+    const a = xmlAttrs(m[0]);
+    if (!a.uuid) continue;
+    services[a.uuid] = Object.assign({
+      uuid: a.uuid,
+      type: a.type || '',
+      name: a.name || a.systemid || '',
+      systemid: a.systemid || '',
+      server: a.server || '',
+      router: a.routerid ? (routers[a.routerid] || '') : ''
+    }, deriveHttpUrl(a.server));
+  }
+
+  // Node nao aninha neste formato (cada um fecha antes do proximo abrir), entao
+  // o match nao-guloso e seguro.
+  const groups = [];
+  const used = new Set();
+  for (const m of xml.matchAll(/<Node\b([^>]*)>([\s\S]*?)<\/Node>/g)) {
+    const a = xmlAttrs('<Node ' + m[1] + '>');
+    const items = [];
+    for (const it of m[2].matchAll(/<Item\b[^>]*\/>/g)) {
+      const svc = services[xmlAttrs(it[0]).serviceid];
+      if (svc) { items.push(svc); used.add(svc.uuid); }
+    }
+    if (items.length) groups.push({ name: a.name || '', services: items });
+  }
+  // conexoes soltas, fora de qualquer pasta
+  const loose = Object.values(services).filter(s => !used.has(s.uuid));
+  if (loose.length) groups.push({ name: '', services: loose });
+
+  return groups;
+}
+
+ipcMain.handle('sap:landscape', () => {
+  try {
+    if (!fs.existsSync(SAP_LANDSCAPE)) {
+      return { ok: false, key: 'be.landscapeMissing', args: [SAP_LANDSCAPE] };
+    }
+    const groups = parseLandscape(fs.readFileSync(SAP_LANDSCAPE, 'utf8'));
+    const count = groups.reduce((n, g) => n + g.services.length, 0);
+    if (!count) return { ok: false, key: 'be.landscapeEmpty', args: [SAP_LANDSCAPE] };
+    return { ok: true, file: SAP_LANDSCAPE, groups, count };
+  } catch (e) {
+    return { ok: false, key: 'be.landscapeError', args: [e.message] };
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Geracao dos arquivos de configuracao na pasta do projeto
 // ---------------------------------------------------------------------------
 function generateConfigs(settings, clients) {

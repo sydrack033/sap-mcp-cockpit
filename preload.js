@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('api', {
   openVscode: (s)          => ipcRenderer.invoke('vscode:open', s),
   openFolder: (s)          => ipcRenderer.invoke('folder:open', s),
 
+  // import do SAP GUI (SAPUILandscape.xml no AppData)
+  sapLandscape: ()         => ipcRenderer.invoke('sap:landscape'),
+
   // auto-update
   updateState: ()          => ipcRenderer.invoke('update:state'),
   updateCheck: ()          => ipcRenderer.invoke('update:check'),
