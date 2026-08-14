@@ -40,19 +40,6 @@
           </svg>
         </button>
       </div>
-      <button id="btn-generate" class="btn btn-primary"
-        data-i18n="btn.generate" data-i18n-title="btn.generate.title">Generate configs</button>
-      <div class="dropdown">
-        <button id="btn-open-in" class="btn"
-          data-i18n-title="btn.openIn.title"><span data-i18n="btn.openIn">Open in</span> ▾</button>
-        <div id="open-menu" class="menu hidden">
-          <button class="menu-item" data-open="vscode">VSCode</button>
-          <button class="menu-item" data-open="claude">Claude Code</button>
-          <button class="menu-item" data-open="codex">Codex</button>
-        </div>
-      </div>
-      <button id="btn-folder" class="btn btn-ghost"
-        data-i18n="btn.folder" data-i18n-title="btn.folder.title">Open folder</button>
     </div>
   </header>
 
@@ -108,14 +95,7 @@
                 <button class="btn btn-sm" data-pick="vsp" data-i18n="browse">Browse…</button>
               </div>
             </div>
-            <div class="field">
-              <label data-i18n="settings.project">Project folder (single workspace)</label>
-              <div class="row">
-                <input id="set-project" type="text" data-i18n-ph="settings.project.ph" placeholder="e.g.: C:/Users/YourUser/Projects/sap-workspace" />
-                <button class="btn btn-sm" data-pick="project" data-i18n="browse">Browse…</button>
-              </div>
-              <p class="hint" data-i18n-html="settings.project.hint">Folder where the config files will be generated. Use <b>Browse…</b> or type the path.</p>
-            </div>
+            <p class="hint" data-i18n-html="settings.folders.hint">The workspace folder is set <b>per client</b>, in the sidebar — there is no single project folder anymore.</p>
             <div class="grid2">
               <div class="field">
                 <label data-i18n="settings.chrome">Chrome path (browser-auth)</label>

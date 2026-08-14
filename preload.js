@@ -16,16 +16,20 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: (opts)       => ipcRenderer.invoke('dialog:pickFolder', opts),
 
   // actions
-  generateConfigs: (p)     => ipcRenderer.invoke('configs:generate', p),
+  // Habilitar MCP: global (~/.claude.json + Codex) ou local (.mcp.json na pasta)
   generateGlobal: (p)      => ipcRenderer.invoke('configs:generateGlobal', p),
   removeGlobal: (p)        => ipcRenderer.invoke('configs:removeGlobal', p),
   globalStatus: ()         => ipcRenderer.invoke('configs:globalStatus'),
+  enableLocal: (p)         => ipcRenderer.invoke('mcp:enableLocal', p),
+  disableLocal: (p)        => ipcRenderer.invoke('mcp:disableLocal', p),
+  localStatus: (folders)   => ipcRenderer.invoke('mcp:localStatus', folders),
+  syncCodex: (p)           => ipcRenderer.invoke('mcp:syncCodex', p),
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),
   // abrir o projeto em: 'vscode' | 'claude' | 'codex'
   openIn: (p)              => ipcRenderer.invoke('open:in', p),
-  openFolder: (s)          => ipcRenderer.invoke('folder:open', s),
+  openFolder: (p)          => ipcRenderer.invoke('folder:open', p),
 
   // import do SAP GUI (SAPUILandscape.xml no AppData)
   sapLandscape: ()         => ipcRenderer.invoke('sap:landscape'),

@@ -11,6 +11,7 @@ let selectedId = null;          // profile id da conexao aberta no detalhe
 const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
+const localFolders = new Set();   // pastas que ja tem .mcp.json
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -126,14 +127,12 @@ function appPrompt(title, message) {
 // ---------------------------------------------------------------------------
 function fillSettings() {
   $('set-vsp').value     = settings.vsp_path || '';
-  $('set-project').value = settings.project_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
   $('set-codex').value   = settings.codex_cmd || 'codex';
 }
 function readSettingsFromForm() {
   settings.vsp_path     = $('set-vsp').value.trim();
-  settings.project_path = $('set-project').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
   settings.codex_cmd    = $('set-codex').value.trim() || 'codex';
@@ -245,7 +244,8 @@ function renderTree() {
     const groupHit = q && g.name.toLowerCase().includes(q);
     const items = g.items
       .filter(({ e }) => groupHit || matches(e))
-      .filter(({ e }) => !onlyGlobal || globalProfiles.has(profileId(e)));
+      .filter(({ e }) => !onlyGlobal ||
+        globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name)));
     // grupo sem nada a mostrar some quando ha filtro (busca ou "so globais")
     if ((q || onlyGlobal) && !items.length) continue;
 
@@ -319,13 +319,20 @@ function renderTree() {
 
       row.append(dot, label);
 
-      // marca as que valem em qualquer pasta (registradas no ~/.claude.json)
+      // selos de onde o MCP esta habilitado: G = global, L = na pasta
       if (globalProfiles.has(id)) {
-        const g = document.createElement('span');
-        g.className = 'global-badge';
-        g.textContent = 'G';
-        g.title = t('card.globalBadge');
-        row.appendChild(g);
+        const b = document.createElement('span');
+        b.className = 'global-badge';
+        b.textContent = 'G';
+        b.title = t('card.globalBadge');
+        row.appendChild(b);
+      }
+      if (localFolders.has(folderOf(e.client_name))) {
+        const b = document.createElement('span');
+        b.className = 'global-badge local';
+        b.textContent = 'L';
+        b.title = t('card.localBadge', folderOf(e.client_name));
+        row.appendChild(b);
       }
       row.onclick = () => selectEnv(idx);
       itemsBox.appendChild(row);
@@ -434,26 +441,40 @@ function renderDetail() {
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
 
-  // "Gerar global" + o ⓘ que explica no hover o que isso faz de fato.
-  // Se ja estiver registrada, aparece tambem o botao de remover do global.
+  // "Habilitar MCP": menu com Global e Local, cada um com a descricao do que
+  // faz. O item ja habilitado vira a acao de desabilitar.
   const isGlobal = globalProfiles.has(id);
-  if (isGlobal) mk(t('card.globalRemove'), 'btn-ghost', () => removeGlobal(e));
+  const dirDaConn = folderOf(e.client_name);
+  const isLocal = !!(dirDaConn && localFolders.has(dirDaConn));
 
-  const globalBox = document.createElement('span');
-  globalBox.className = 'with-info';
-  const gBtn = document.createElement('button');
-  gBtn.className = 'btn btn-sm' + (isGlobal ? ' btn-ok' : '');
-  gBtn.textContent = isGlobal ? t('card.globalAgain') : t('card.global');
-  gBtn.onclick = () => generateGlobal(e, gBtn);
-  const icon = document.createElement('span');
-  icon.className = 'info-icon';
-  icon.textContent = 'i';
-  icon.setAttribute('aria-label', t('card.globalInfo.title'));
-  const tip = document.createElement('span');
-  tip.className = 'info-tip';
-  tip.innerHTML = t('card.globalInfo', id);
-  globalBox.append(gBtn, icon, tip);
-  actions.appendChild(globalBox);
+  const mcpBox = document.createElement('span');
+  mcpBox.className = 'dropdown';
+  const mBtn = document.createElement('button');
+  mBtn.className = 'btn btn-sm' + (isGlobal || isLocal ? ' btn-ok' : '');
+  const marcas = [isGlobal && t('mcp.global'), isLocal && t('mcp.local')].filter(Boolean);
+  mBtn.textContent = (marcas.length ? '✓ ' + marcas.join(' + ') : t('mcp.enable')) + ' ▾';
+  mBtn.title = t('mcp.enable.title');
+
+  const mMenu = document.createElement('div');
+  mMenu.className = 'menu menu-wide hidden';
+  for (const escopo of ['global', 'local']) {
+    const ativo = escopo === 'global' ? isGlobal : isLocal;
+    const item = document.createElement('button');
+    item.className = 'menu-item mcp-opt' + (ativo ? ' on' : '');
+    const titulo = document.createElement('span');
+    titulo.className = 'mcp-opt-title';
+    titulo.textContent = (ativo ? '✓ ' : '') + t('mcp.' + escopo) +
+      (ativo ? ' — ' + t('mcp.clickDisable') : '');
+    const desc = document.createElement('span');
+    desc.className = 'mcp-opt-desc';
+    desc.innerHTML = t('mcp.' + escopo + '.desc', dirDaConn || t('mcp.noFolder'));
+    item.append(titulo, desc);
+    item.onclick = () => toggleMcp(e, escopo, ativo);
+    mMenu.appendChild(item);
+  }
+  mBtn.onclick = (ev) => { ev.stopPropagation(); closeMenus(mMenu); mMenu.classList.toggle('hidden'); };
+  mcpBox.append(mBtn, mMenu);
+  actions.appendChild(mcpBox);
 
   mk(t('card.remove'), 'btn-ghost', () => removeEnv(idx));
 
@@ -742,17 +763,6 @@ function pickImport(group, svc) {
 // ---------------------------------------------------------------------------
 // Acoes principais
 // ---------------------------------------------------------------------------
-async function generateConfigs() {
-  readSettingsFromForm();
-  await window.api.saveSettings(settings);
-  if (!settings.project_path) { setStatus(t('err.noProject'), 'err'); return; }
-  if (!clients.environments.length) { setStatus(t('err.noEnvs'), 'err'); return; }
-
-  setStatus(t('msg.generating'));
-  const res = await window.api.generateConfigs({ settings, clients });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
-}
-
 // Sufixo do status contando os processos vsp derrubados.
 // vspKilled: numero derrubado; null = derrubou mas nao da pra contar (pkill).
 function killedNote(res) {
@@ -764,26 +774,10 @@ function killedNote(res) {
 
 const OPEN_LABELS = { vscode: 'VSCode', claude: 'Claude Code', codex: 'Codex' };
 
-async function openIn(target) {
-  closeOpenMenu();
-  readSettingsFromForm();
-  await window.api.saveSettings(settings);
-  setStatus(t('msg.opening', OPEN_LABELS[target] || target));
-  const res = await window.api.openIn({ settings, target });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
-}
-
 // Fecha todo menu aberto, menos o que estiver sendo alternado agora.
 function closeMenus(exceto) {
   document.querySelectorAll('.menu').forEach(m => { if (m !== exceto) m.classList.add('hidden'); });
 }
-function closeOpenMenu() { closeMenus(); }
-function toggleOpenMenu() {
-  const m = $('open-menu');
-  closeMenus(m);
-  m.classList.toggle('hidden');
-}
-
 // Abrir em, a partir da conexao: usa a pasta do cliente (pedindo se faltar).
 async function openConnIn(env, target) {
   closeMenus();
@@ -796,44 +790,72 @@ async function openConnIn(env, target) {
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
 }
 
-async function openFolder() {
-  readSettingsFromForm();
-  const res = await window.api.openFolder(settings);
-  if (!res.ok) setStatus('✗ ' + msgOf(res), 'err');
-}
-
 // Registra ESTA conexao no escopo global do Claude Code (~/.claude.json),
 // pra ela valer fora da pasta do projeto.
-async function generateGlobal(env, btn) {
+// Anexa a pasta do cliente na conexao. O main precisa dela pra saber onde fica
+// o cookie e onde gravar — quem conhece o mapa cliente->pasta e o renderer.
+function withFolder(e) {
+  return Object.assign({}, e, { folder: folderOf(e.client_name) });
+}
+
+// Liga/desliga o MCP da conexao no escopo escolhido.
+async function toggleMcp(env, escopo, jaAtivo) {
+  closeMenus();
   readSettingsFromForm();
   await window.api.saveSettings(settings);
-  if (!settings.project_path) { setStatus(t('err.noProject'), 'err'); return; }
-  const label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = t('card.globalWorking'); }
-  const res = await window.api.generateGlobal({ settings, env });
+
+  // as duas pontas precisam da pasta: o global pro cookie, o local pra gravar
+  const dir = await ensureFolder(env.client_name);
+  if (!dir) { setStatus(t('msg.folderNeeded', env.client_name), 'warn'); return; }
+
+  let res;
+  if (escopo === 'global') {
+    res = jaAtivo
+      ? (await appConfirm(t('confirm.globalRemove', profileId(env))))
+        ? await window.api.removeGlobal({ settings, env: withFolder(env) })
+        : null
+      : await window.api.generateGlobal({ settings, env: withFolder(env) });
+    // Codex so le do config global: acompanha o escopo global, nunca o local
+    if (res && res.ok) {
+      const todas = (clients.environments || []).filter(x => globalProfiles.has(profileId(x)) || profileId(x) === profileId(env));
+      await window.api.syncCodex({ settings, envs: todas.map(withFolder) });
+    }
+  } else {
+    if (jaAtivo) {
+      res = (await appConfirm(t('confirm.localRemove', dir)))
+        ? await window.api.disableLocal({ settings, folder: dir })
+        : null;
+    } else {
+      // TODAS as conexoes que dividem esta pasta: gravar so a clicada apagaria
+      // as outras do .mcp.json
+      const daPasta = (clients.environments || []).filter(x => folderOf(x.client_name) === dir);
+      res = await window.api.enableLocal({ settings, folder: dir, envs: daPasta.map(withFolder) });
+    }
+  }
+  if (!res) return; // usuario cancelou a confirmacao
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
-  if (btn) { btn.disabled = false; btn.textContent = label || t('card.global'); }
-  await refreshGlobalStatus(); // re-renderiza com o selo/botao atualizados
+  await refreshMcpStatus();
 }
 
-async function removeGlobal(env) {
-  const id = profileId(env);
-  if (!(await appConfirm(t('confirm.globalRemove', id)))) return;
-  const res = await window.api.removeGlobal({ settings, env });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
-  await refreshGlobalStatus();
-}
-
-// Quais conexoes estao no escopo global. Alimenta o selo na arvore, o filtro
-// "so globais" e a escolha entre Gerar/Remover no detalhe.
-async function refreshGlobalStatus() {
+// Onde cada conexao esta habilitada: global (~/.claude.json) e/ou local
+// (.mcp.json na pasta). Alimenta os selos, o filtro e o menu do detalhe.
+async function refreshMcpStatus() {
   try {
     const res = await window.api.globalStatus();
     globalProfiles.clear();
     for (const p of (res.profiles || [])) globalProfiles.add(p);
   } catch (e) { /* sem status: segue sem selo */ }
-  // conta so as que sao conexoes daqui — o arquivo pode ter servers de terceiros
-  const meus = (clients.environments || []).filter(e => globalProfiles.has(profileId(e))).length;
+
+  try {
+    const pastas = [...new Set(Object.values(clients.folders || {}))].filter(Boolean);
+    const res = await window.api.localStatus(pastas);
+    localFolders.clear();
+    for (const [dir, tem] of Object.entries((res && res.folders) || {})) if (tem) localFolders.add(dir);
+  } catch (e) { /* idem */ }
+
+  // conta so as conexoes DAQUI — o ~/.claude.json pode ter servers de terceiros
+  const meus = (clients.environments || []).filter(e =>
+    globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name))).length;
   const badge = $('global-count');
   if (badge) badge.textContent = meus;
   render();
@@ -842,11 +864,10 @@ async function refreshGlobalStatus() {
 async function doTest(env, btn) {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
-  if (!settings.project_path) { setStatus(t('err.noProject'), 'err'); return; }
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = t('card.testing'); }
   setStatus(`${t('card.testing')} ${profileId(env)}`);
-  const res = await window.api.vspTest({ settings, env });
+  const res = await window.api.vspTest({ settings, env: withFolder(env) });
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
   if (res.log) lastLog = res.log;
   if (btn) { btn.disabled = false; btn.textContent = label || t('card.test'); }
@@ -855,10 +876,9 @@ async function doTest(env, btn) {
 async function doLogin(env, btn) {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
-  if (!settings.project_path) { setStatus(t('err.loginNoProject'), 'err'); return; }
   setStatus(t('msg.loginStart', profileId(env)));
   if (btn) { btn.disabled = true; btn.textContent = t('card.logging'); }
-  const res = await window.api.vspLogin({ settings, env });
+  const res = await window.api.vspLogin({ settings, env: withFolder(env) });
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
   if (res.log) lastLog = res.log;
 
@@ -882,9 +902,6 @@ async function pick(kind) {
   } else if (kind === 'chrome') {
     const p = await window.api.pickFile({ title: t('pick.browser'), filters: exeFilters });
     if (p) $('set-chrome').value = p;
-  } else if (kind === 'project') {
-    const p = await window.api.pickFolder({ title: t('pick.project') });
-    if (p) $('set-project').value = p;
   }
 }
 
@@ -898,17 +915,9 @@ function bind() {
   });
 
   // topbar
-  $('btn-generate').onclick = generateConfigs;
-  $('btn-folder').onclick   = openFolder;
-
-  // dropdown "Abrir em"
-  $('btn-open-in').onclick = (ev) => { ev.stopPropagation(); toggleOpenMenu(); };
-  document.querySelectorAll('#open-menu .menu-item').forEach(b => {
-    b.onclick = () => openIn(b.getAttribute('data-open'));
-  });
-  // fecha ao clicar fora ou apertar Esc
-  document.addEventListener('click', closeOpenMenu);
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeOpenMenu(); });
+  // fecha qualquer menu ao clicar fora ou apertar Esc
+  document.addEventListener('click', () => closeMenus());
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeMenus(); });
 
   // navegacao entre Conexoes e Configuracoes
   document.querySelectorAll('.nav-item').forEach(b => {
@@ -960,9 +969,8 @@ function bind() {
 // ---------------------------------------------------------------------------
 // Pergunta ao main quais ambientes Cloud ja tem cookie salvo e marca como logados.
 async function refreshCookieStatus() {
-  if (!settings.project_path) return;
   try {
-    const status = await window.api.cookiesStatus({ settings, envs: clients.environments });
+    const status = await window.api.cookiesStatus({ settings, envs: (clients.environments||[]).map(withFolder) });
     for (const [id, has] of Object.entries(status || {})) {
       if (has) loggedIn.add(id); else loggedIn.delete(id);
     }
@@ -1031,7 +1039,7 @@ async function init() {
   fillSettings();
   render();
   await refreshCookieStatus();
-  await refreshGlobalStatus();
+  await refreshMcpStatus();
   await initUpdates();
   setStatus(t('status.ready'));
 }

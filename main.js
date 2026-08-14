@@ -34,7 +34,6 @@ try {
 
 const DEFAULT_SETTINGS = {
   vsp_path: 'C:/Users/' + (process.env.USERNAME || 'user') + '/Projects/tools/vsp.exe',
-  project_path: '', // vazio de proposito: o usuario escolhe a pasta (placeholder mostra o exemplo)
   chrome_path: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   vscode_cmd: 'code',
   codex_cmd: 'codex', // CLI do Codex; aceita caminho completo
@@ -100,7 +99,13 @@ function cookieExists(projectPath, env) {
   }
 }
 
-// Entrada do sistema no .vsp.json (compartilhada por generateConfigs e pelo teste).
+// A pasta de uma conexao. O renderer manda ela junto no payload (campo
+// transiente `folder`), porque quem conhece o mapa cliente->pasta e ele.
+function folderOfEnv(e, fallback) {
+  return (e && e.folder) || fallback || '';
+}
+
+// Entrada do sistema no .vsp.json (compartilhada pela geracao e pelo teste).
 function buildSystemEntry(projectPath, e) {
   const sys = { url: e.url, client: e.sap_client || '100' };
   if (e.language) sys.language = e.language;
@@ -118,11 +123,12 @@ function buildSystemEntry(projectPath, e) {
 // pra pegar URL/credencial do .vsp.json — ele exige a conexao EXPLICITA (senao morre
 // com "SAP URL is required" antes do handshake). Por isso passamos tudo explicito aqui,
 // deixando o server self-contained (independe de cwd / .vsp.json).
-function buildMcpArgs(settings, e) {
+function buildMcpArgs(settings, e, folder) {
   const args = ['--url', e.url, '--client', e.sap_client || '100'];
   if (e.language) args.push('--language', e.language);
   if (e.auth_type === 'cloud') {
-    args.push('--cookie-file', cookieFileFor(settings.project_path, e).replace(/\\/g, '/'));
+    // caminho ABSOLUTO: o server precisa achar o cookie independente do cwd
+    args.push('--cookie-file', cookieFileFor(folderOfEnv(e, folder), e).replace(/\\/g, '/'));
   } else { // onprem
     if (e.user)     args.push('--user', e.user);
     if (e.password) args.push('--password', e.password);
@@ -141,8 +147,8 @@ function tomlStr(s) {
 }
 
 // Comando + args + env de um server MCP.
-function buildServerLaunch(settings, e) {
-  return { command: settings.vsp_path, args: buildMcpArgs(settings, e), env: {} };
+function buildServerLaunch(settings, e, folder) {
+  return { command: settings.vsp_path, args: buildMcpArgs(settings, e, folder), env: {} };
 }
 
 // Conteudo de instrucoes do projeto (usado em CLAUDE.md e AGENTS.md).
@@ -277,7 +283,7 @@ function buildCodexBlock(settings, envs) {
   const lines = [CODEX_MARK_START];
   for (const e of envs) {
     const id = envIdOf(e);
-    const launch = buildServerLaunch(settings, e);
+    const launch = buildServerLaunch(settings, e, e.folder);
     lines.push(`[mcp_servers.${id}]`);
     lines.push(`command = ${tomlStr(launch.command)}`);
     lines.push(`args = [${launch.args.map(tomlStr).join(', ')}]`);
@@ -365,8 +371,8 @@ function killVspProcesses(settings) {
 // ---------------------------------------------------------------------------
 const CLAUDE_GLOBAL = path.join(os.homedir(), '.claude.json');
 
-function buildMcpServerEntry(settings, e) {
-  const launch = buildServerLaunch(settings, e);
+function buildMcpServerEntry(settings, e, folder) {
+  const launch = buildServerLaunch(settings, e, folder);
   const entry = { type: 'stdio', command: launch.command, args: launch.args };
   const envMap = Object.assign({}, launch.env);
   if (e.auth_type === 'onprem' && e.password) {
@@ -407,8 +413,8 @@ ipcMain.handle('configs:globalStatus', () => {
 ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
   try {
     const { settings, env } = payload || {};
-    if (!settings || !settings.project_path) return { ok: false, key: 'be.noProjectDefined' };
     if (!env) return { ok: false, key: 'be.globalNoEnv' };
+    if (env.auth_type === 'cloud' && !env.folder) return { ok: false, key: 'be.noFolderForConn' };
 
     const id = envIdOf(env);
     const r = readClaudeGlobal();
@@ -417,7 +423,7 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     const json = r.json;
     if (!json.mcpServers || typeof json.mcpServers !== 'object') json.mcpServers = {};
     const existed = Object.prototype.hasOwnProperty.call(json.mcpServers, id);
-    json.mcpServers[id] = buildMcpServerEntry(settings, env);
+    json.mcpServers[id] = buildMcpServerEntry(settings, env, env.folder);
     writeClaudeGlobal(json, r.raw);
 
     // Mesmo motivo do "Gerar configs": o vsp que o host subiu segura a config
@@ -560,61 +566,39 @@ ipcMain.handle('sap:landscape', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Geracao dos arquivos de configuracao na pasta do projeto
+// Geracao dos arquivos de um WORKSPACE.
+//
+// A unidade e a PASTA, nao a conexao: duas conexoes que apontam pra mesma pasta
+// compartilham um workspace so, e o .mcp.json dela lista as duas. Por isso quem
+// chama precisa passar TODAS as conexoes daquela pasta — gravar so a conexao
+// clicada apagaria as outras do arquivo.
 // ---------------------------------------------------------------------------
-function generateConfigs(settings, clients) {
-  const projectPath = settings.project_path;
-  if (!projectPath) {
-    return { ok: false, key: 'be.noProjectDefined' };
-  }
-  fs.mkdirSync(projectPath, { recursive: true });
-
-  const envs = (clients.environments || []);
+function generateWorkspace(settings, folder, envs) {
+  if (!folder) return { ok: false, key: 'be.noFolderForConn' };
+  fs.mkdirSync(folder, { recursive: true });
 
   // ---- .vsp.json (fonte da verdade dos sistemas) ----
   const systems = {};
-  for (const e of envs) {
-    systems[envIdOf(e)] = buildSystemEntry(projectPath, e);
-  }
+  for (const e of envs) systems[envIdOf(e)] = buildSystemEntry(folder, e);
   const vspJson = { systems };
   if (envs.length) vspJson.default = envIdOf(envs[0]);
-  writeJson(path.join(projectPath, '.vsp.json'), vspJson);
+  writeJson(path.join(folder, '.vsp.json'), vspJson);
 
-  // ---- .mcp.json (Claude Code - um server por ambiente, usando -s <profile>) ----
-  // A senha on-prem vai no bloco `env` do server: o host MCP (Claude/Codex) NAO
-  // carrega o .env, entao sem isso o server sobe sem senha e a auth falha (zero tools).
+  // ---- .mcp.json (Claude Code - um server por ambiente) ----
+  // A senha on-prem vai no bloco `env` do server: o host MCP NAO carrega o
+  // .env, entao sem isso o server sobe sem senha e a auth falha (zero tools).
   const mcpServers = {};
-  for (const e of envs) {
-    const id = envIdOf(e);
-    const launch = buildServerLaunch(settings, e);
-    const server = { command: launch.command, args: launch.args };
-    const envMap = Object.assign({}, launch.env);
-    if (e.auth_type === 'onprem' && e.password) {
-      for (const v of passwordVarsOf(id)) envMap[v] = e.password;
-    }
-    if (Object.keys(envMap).length) server.env = envMap;
-    mcpServers[id] = server;
-  }
-  writeJson(path.join(projectPath, '.mcp.json'), { mcpServers });
-
-  // ---- Codex MCP: mesclar no ~/.codex/config.toml GLOBAL ----
-  // O build atual do Codex carrega MCP SO do config global (nao do .codex/config.toml
-  // por projeto). Mesclamos um bloco gerenciado, preservando o resto da config.
-  let codexGlobalFile = '';
-  try {
-    codexGlobalFile = mergeCodexGlobalConfig(settings, envs);
-  } catch (e) {
-    console.error('Falha ao mesclar Codex global config:', e);
-  }
+  for (const e of envs) mcpServers[envIdOf(e)] = buildMcpServerEntry(settings, e, folder);
+  writeJson(path.join(folder, '.mcp.json'), { mcpServers });
 
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
   const instructions = buildInstructionsMd(envs);
-  fs.writeFileSync(path.join(projectPath, 'CLAUDE.md'), instructions, 'utf8');
-  fs.writeFileSync(path.join(projectPath, 'AGENTS.md'), instructions, 'utf8');
+  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), instructions, 'utf8');
+  fs.writeFileSync(path.join(folder, 'AGENTS.md'), instructions, 'utf8');
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
-    '# Senhas dos ambientes On-Premise (basic auth).',
+    '# Senhas das conexoes Private (basic auth).',
     '# Gerado pelo SAP MCP Cockpit. NAO versionar (esta no .gitignore).',
     '# Padrao lido pelo vsp: VSP_<SYSTEM>_PASSWORD',
     ''
@@ -624,36 +608,83 @@ function generateConfigs(settings, clients) {
       for (const v of passwordVarsOf(envIdOf(e))) envLines.push(`${v}=${e.password}`);
     }
   }
-  fs.writeFileSync(path.join(projectPath, '.env'), envLines.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(folder, '.env'), envLines.join('\n') + '\n', 'utf8');
 
   // ---- .gitignore ----
-  const gitignore = [
+  fs.writeFileSync(path.join(folder, '.gitignore'), [
     '# SAP MCP Cockpit - arquivos sensiveis / locais',
-    '.env',
-    '.vsp.json',
-    '.mcp.json',
-    '.codex/',
-    'codex.toml',
-    'cookies*.txt',
-    ''
-  ].join('\n');
-  fs.writeFileSync(path.join(projectPath, '.gitignore'), gitignore, 'utf8');
-
-  // ---- Derruba o vsp velho (DEPOIS de escrever tudo) ----
-  // Se matasse antes, o host poderia respawnar no meio da escrita e pegar
-  // config pela metade.
-  const vsp = killVspProcesses(settings);
+    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt', ''
+  ].join('\n'), 'utf8');
 
   return {
     ok: true,
-    key: 'be.configsGenerated',
-    args: [projectPath, envs.length],
-    vspKilled: vsp.killed,
-    files: ['.vsp.json', '.mcp.json', '~/.codex/config.toml', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
-    count: envs.length,
-    codexGlobal: codexGlobalFile
+    files: ['.vsp.json', '.mcp.json', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
+    count: envs.length
   };
 }
+
+// Habilitar MCP LOCAL: grava o workspace da pasta desta conexao, com todas as
+// conexoes que dividem a mesma pasta.
+ipcMain.handle('mcp:enableLocal', (_evt, payload) => {
+  try {
+    const { settings, folder, envs } = payload || {};
+    if (!folder) return { ok: false, key: 'be.noFolderForConn' };
+    const lista = envs || [];
+    if (!lista.length) return { ok: false, key: 'be.globalNoEnv' };
+
+    const res = generateWorkspace(settings, folder, lista);
+    if (!res.ok) return res;
+
+    const vsp = killVspProcesses(settings);
+    return {
+      ok: true,
+      key: 'be.localEnabled',
+      args: [folder, lista.length],
+      vspKilled: vsp.killed,
+      files: res.files
+    };
+  } catch (e) {
+    return { ok: false, key: 'be.genError', args: [e.message] };
+  }
+});
+
+// Desabilitar MCP local: apaga so o .mcp.json da pasta. Os outros arquivos
+// (CLAUDE.md, .env, .vsp.json) ficam — o usuario pode ter editado, e sao eles
+// que fazem o workspace continuar util fora do MCP.
+ipcMain.handle('mcp:disableLocal', (_evt, payload) => {
+  try {
+    const { settings, folder } = payload || {};
+    if (!folder) return { ok: false, key: 'be.noFolderForConn' };
+    const alvo = path.join(folder, '.mcp.json');
+    if (!fs.existsSync(alvo)) return { ok: false, key: 'be.localNotThere', args: [folder] };
+    fs.unlinkSync(alvo);
+    const vsp = killVspProcesses(settings);
+    return { ok: true, key: 'be.localDisabled', args: [folder], vspKilled: vsp.killed };
+  } catch (e) {
+    return { ok: false, key: 'be.genError', args: [e.message] };
+  }
+});
+
+// Quais pastas ja tem .mcp.json — alimenta o selo "local" na arvore.
+ipcMain.handle('mcp:localStatus', (_evt, folders) => {
+  const out = {};
+  for (const f of (folders || [])) {
+    try { out[f] = fs.existsSync(path.join(f, '.mcp.json')); } catch (e) { out[f] = false; }
+  }
+  return { ok: true, folders: out };
+});
+
+// Codex so le MCP do config GLOBAL — nao existe equivalente por projeto. Por
+// isso o "local" nao vale pra ele, e o "global" mexe nos dois arquivos.
+ipcMain.handle('mcp:syncCodex', (_evt, payload) => {
+  try {
+    const { settings, envs } = payload || {};
+    const file = mergeCodexGlobalConfig(settings, envs || []);
+    return { ok: true, file };
+  } catch (e) {
+    return { ok: false, key: 'be.genError', args: [e.message] };
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Janela
@@ -814,14 +845,6 @@ ipcMain.handle('dialog:pickFolder', async (_evt, opts) => {
   return res.filePaths[0].replace(/\\/g, '/');
 });
 
-ipcMain.handle('configs:generate', (_evt, payload) => {
-  try {
-    return generateConfigs(payload.settings, payload.clients);
-  } catch (e) {
-    return { ok: false, key: 'be.genError', args: [e.message] };
-  }
-});
-
 // Login SSO (cloud) - dispara vsp --browser-auth e salva o cookie do ambiente.
 // O vsp browser-auth nem sempre encerra sozinho (fica vivo apos a captura), entao
 // detectamos o SUCESSO pelo arquivo de cookie sendo salvo (estavel) e ai encerramos
@@ -829,8 +852,13 @@ ipcMain.handle('configs:generate', (_evt, payload) => {
 ipcMain.handle('vsp:login', (_evt, payload) => {
   return new Promise((resolve) => {
     const { settings, env } = payload;
-    const projectPath = settings.project_path;
-
+    // a pasta vem da conexao: o cookie tem que morar no mesmo workspace que a
+    // config aponta, senao o vsp procura num lugar e o login gravou noutro
+    const projectPath = folderOfEnv(env);
+    if (!projectPath) {
+      resolve({ ok: false, key: 'be.noFolderForConn' });
+      return;
+    }
     if (!fs.existsSync(settings.vsp_path)) {
       resolve({ ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] });
       return;
@@ -916,13 +944,12 @@ ipcMain.handle('vsp:login', (_evt, payload) => {
 // Status dos cookies: quais ambientes Cloud ja tem cookie salvo na pasta do projeto.
 // Usado ao abrir o app pra deixar verde quem ja esta logado.
 ipcMain.handle('cookies:status', (_evt, payload) => {
-  const { settings, envs } = payload || {};
+  const { envs } = payload || {};
   const result = {};
-  const projectPath = settings && settings.project_path;
-  if (!projectPath) return result;
   for (const e of (envs || [])) {
     if (e.auth_type !== 'cloud') continue;
-    result[envIdOf(e)] = cookieExists(projectPath, e);
+    const dir = folderOfEnv(e);
+    result[envIdOf(e)] = dir ? cookieExists(dir, e) : false;
   }
   return result;
 });
@@ -932,14 +959,17 @@ ipcMain.handle('cookies:status', (_evt, payload) => {
 ipcMain.handle('vsp:test', (_evt, payload) => {
   return new Promise((resolve) => {
     const { settings, env } = payload;
-    const projectPath = settings.project_path;
+    const projectPath = folderOfEnv(env);
     const id = envIdOf(env);
+    if (!projectPath) {
+      resolve({ ok: false, key: 'be.noFolderForConn' });
+      return;
+    }
 
     if (!fs.existsSync(settings.vsp_path)) {
       resolve({ ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] });
       return;
     }
-    if (!projectPath) { resolve({ ok: false, key: 'be.noProjectDefined' }); return; }
     fs.mkdirSync(projectPath, { recursive: true });
 
     // Pre-checagens de credencial pra dar mensagem clara.
@@ -1064,7 +1094,7 @@ ipcMain.handle('open:in', (_evt, payload) => {
 
     // projectPath explicito = pasta do cliente (Abrir em na conexao).
     // Sem ele, cai na pasta padrao das Configuracoes (botao da topbar).
-    const projectPath = (payload && payload.projectPath) || settings.project_path;
+    const projectPath = payload && payload.projectPath;
     if (!projectPath || !fs.existsSync(projectPath)) {
       resolve({ ok: false, key: 'be.vscodeNoFolder' });
       return;
@@ -1103,10 +1133,11 @@ ipcMain.handle('open:in', (_evt, payload) => {
   });
 });
 
-// Abrir a pasta do projeto no Explorer
-ipcMain.handle('folder:open', (_evt, settings) => {
-  if (settings.project_path && fs.existsSync(settings.project_path)) {
-    shell.openPath(settings.project_path);
+// Abrir uma pasta no Explorer (usada pelo atalho da pasta do cliente)
+ipcMain.handle('folder:open', (_evt, payload) => {
+  const dir = (payload && payload.folder) || '';
+  if (dir && fs.existsSync(dir)) {
+    shell.openPath(dir);
     return { ok: true };
   }
   return { ok: false, key: 'be.folderMissing' };
