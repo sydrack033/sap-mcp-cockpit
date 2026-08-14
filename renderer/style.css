@@ -390,6 +390,64 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 .detail-grid dt { color: var(--text-dim); }
 .detail-grid dd { margin: 0; word-break: break-all; }
 
+/* ---------- Botao com ⓘ explicativo ---------- */
+/* O .panel usa overflow:hidden pros cantos arredondados, e isso CORTAVA o
+   tooltip. No painel de detalhe o overflow volta a ser visivel, e o
+   arredondamento do header passa a ser explicito pra compensar. */
+#conn-detail .panel { overflow: visible; }
+#conn-detail .panel-head { border-radius: var(--radius) var(--radius) 0 0; }
+
+.with-info { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  color: var(--accent-hi);
+  font-size: 11px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, serif;
+  cursor: help;
+  user-select: none;
+}
+.info-icon:hover { background: var(--accent); color: #08130c; }
+/* o popup vive dentro do .with-info e so aparece no hover do icone */
+.info-tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 340px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0,0,0,.5);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  cursor: default;
+}
+.info-icon:hover + .info-tip,
+.info-tip:hover { display: block; }
+.info-tip b { color: var(--accent-soft); }
+.info-tip code {
+  background: var(--bg);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: Consolas, monospace;
+}
+.info-tip ul { margin: 6px 0 0; padding-left: 16px; }
+.info-tip li { margin-bottom: 4px; }
+
 /* ---------- Lista do import (SAP GUI) ---------- */
 .import-list { max-height: 46vh; overflow-y: auto; margin-top: 10px; }
 .import-group {

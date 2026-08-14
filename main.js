@@ -349,6 +349,77 @@ function killVspProcesses(settings) {
 }
 
 // ---------------------------------------------------------------------------
+// Registrar UMA conexao no escopo GLOBAL do Claude Code.
+//
+// O "Gerar configs" escreve .mcp.json na pasta do projeto — escopo de projeto:
+// o server so existe quando o Claude Code roda dentro daquela pasta. O escopo
+// user fica em ~/.claude.json, na chave mcpServers do topo, e vale em qualquer
+// pasta.
+//
+// Isso funciona porque buildMcpArgs ja monta a conexao COMPLETA e com caminho
+// ABSOLUTO do cookie — a entrada nao depende do cwd.
+//
+// Cuidado com esse arquivo: ele guarda o estado inteiro do Claude Code (dezenas
+// de KB, historico por projeto, conta). Por isso: le, mexe so em mcpServers,
+// e grava em temp + rename (atomico), com .bak da versao anterior.
+// ---------------------------------------------------------------------------
+const CLAUDE_GLOBAL = path.join(os.homedir(), '.claude.json');
+
+function buildMcpServerEntry(settings, e) {
+  const launch = buildServerLaunch(settings, e);
+  const entry = { type: 'stdio', command: launch.command, args: launch.args };
+  const envMap = Object.assign({}, launch.env);
+  if (e.auth_type === 'onprem' && e.password) {
+    for (const v of passwordVarsOf(envIdOf(e))) envMap[v] = e.password;
+  }
+  if (Object.keys(envMap).length) entry.env = envMap;
+  return entry;
+}
+
+ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
+  try {
+    const { settings, env } = payload || {};
+    if (!settings || !settings.project_path) return { ok: false, key: 'be.noProjectDefined' };
+    if (!env) return { ok: false, key: 'be.globalNoEnv' };
+
+    const id = envIdOf(env);
+    let raw = '';
+    let json = {};
+    if (fs.existsSync(CLAUDE_GLOBAL)) {
+      raw = fs.readFileSync(CLAUDE_GLOBAL, 'utf8');
+      try {
+        json = JSON.parse(raw);
+      } catch (e) {
+        // arquivo corrompido: nao sobrescreve nada, so avisa
+        return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
+      }
+      fs.writeFileSync(CLAUDE_GLOBAL + '.bak', raw, 'utf8');
+    }
+
+    if (!json.mcpServers || typeof json.mcpServers !== 'object') json.mcpServers = {};
+    const existed = Object.prototype.hasOwnProperty.call(json.mcpServers, id);
+    json.mcpServers[id] = buildMcpServerEntry(settings, env);
+
+    // mantem o estilo do arquivo (o Claude Code grava identado)
+    const pretty = !raw || /^\{\s*\r?\n/.test(raw);
+    const out = JSON.stringify(json, null, pretty ? 2 : 0);
+
+    const tmp = CLAUDE_GLOBAL + '.tmp';
+    fs.writeFileSync(tmp, out, 'utf8');
+    fs.renameSync(tmp, CLAUDE_GLOBAL); // atomico: nunca deixa o arquivo pela metade
+
+    return {
+      ok: true,
+      key: existed ? 'be.globalUpdated' : 'be.globalAdded',
+      args: [id, CLAUDE_GLOBAL],
+      profile: id
+    };
+  } catch (e) {
+    return { ok: false, key: 'be.globalFail', args: [e.message] };
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Import do SAP GUI: %APPDATA%/SAP/Common/SAPUILandscape.xml
 // Estrutura do arquivo: Workspace > Node (a pasta, que na pratica e o cliente)
 // > Item(serviceid) -> Service (a conexao). Routers ficam a parte, referenciados

@@ -352,6 +352,24 @@ function renderDetail() {
   mk(t('card.test'), '', function () { doTest(e, this); });
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
+
+  // "Gerar global" + o ⓘ que explica no hover o que isso faz de fato
+  const globalBox = document.createElement('span');
+  globalBox.className = 'with-info';
+  const gBtn = document.createElement('button');
+  gBtn.className = 'btn btn-sm';
+  gBtn.textContent = t('card.global');
+  gBtn.onclick = () => generateGlobal(e, gBtn);
+  const icon = document.createElement('span');
+  icon.className = 'info-icon';
+  icon.textContent = 'i';
+  icon.setAttribute('aria-label', t('card.globalInfo.title'));
+  const tip = document.createElement('span');
+  tip.className = 'info-tip';
+  tip.innerHTML = t('card.globalInfo', id);
+  globalBox.append(gBtn, icon, tip);
+  actions.appendChild(globalBox);
+
   mk(t('card.remove'), 'btn-ghost', () => removeEnv(idx));
 
   head.append(titleBox, actions);
@@ -667,6 +685,19 @@ async function openFolder() {
   readSettingsFromForm();
   const res = await window.api.openFolder(settings);
   if (!res.ok) setStatus('✗ ' + msgOf(res), 'err');
+}
+
+// Registra ESTA conexao no escopo global do Claude Code (~/.claude.json),
+// pra ela valer fora da pasta do projeto.
+async function generateGlobal(env, btn) {
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+  if (!settings.project_path) { setStatus(t('err.noProject'), 'err'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('card.globalWorking'); }
+  const res = await window.api.generateGlobal({ settings, env });
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+  if (btn) { btn.disabled = false; btn.textContent = label || t('card.global'); }
 }
 
 async function doTest(env, btn) {

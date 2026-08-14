@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // actions
   generateConfigs: (p)     => ipcRenderer.invoke('configs:generate', p),
+  generateGlobal: (p)      => ipcRenderer.invoke('configs:generateGlobal', p),
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),
