@@ -76,6 +76,12 @@
           <button id="btn-import" class="btn btn-sm" data-i18n="envs.import"
             data-i18n-title="envs.import.title">Import</button>
         </div>
+        <!-- filtro: so as conexoes registradas no escopo global -->
+        <label class="check filter-global">
+          <input id="filter-global" type="checkbox" />
+          <span data-i18n="envs.onlyGlobal">Only global</span>
+          <span id="global-count" class="pill">0</span>
+        </label>
       </div>
       <div id="env-tree" class="env-tree"></div>
       <p id="env-empty" class="empty" data-i18n-html="envs.empty">No connection yet. Click <b>+ Connection</b>.</p>

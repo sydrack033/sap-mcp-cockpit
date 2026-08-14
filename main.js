@@ -376,6 +376,34 @@ function buildMcpServerEntry(settings, e) {
   return entry;
 }
 
+// Le o ~/.claude.json. Devolve { json, raw } ou { error } — nunca lanca, pra
+// quem chama poder decidir se recusa (na escrita) ou ignora (na leitura).
+function readClaudeGlobal() {
+  if (!fs.existsSync(CLAUDE_GLOBAL)) return { json: {}, raw: '' };
+  const raw = fs.readFileSync(CLAUDE_GLOBAL, 'utf8');
+  try {
+    return { json: JSON.parse(raw), raw };
+  } catch (e) {
+    return { error: 'badJson', raw };
+  }
+}
+
+// Grava preservando tudo: .bak da versao anterior + temp/rename atomico.
+function writeClaudeGlobal(json, raw) {
+  if (raw) fs.writeFileSync(CLAUDE_GLOBAL + '.bak', raw, 'utf8');
+  const pretty = !raw || /^\{\s*\r?\n/.test(raw); // mantem o estilo do arquivo
+  const tmp = CLAUDE_GLOBAL + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(json, null, pretty ? 2 : 0), 'utf8');
+  fs.renameSync(tmp, CLAUDE_GLOBAL); // nunca deixa o arquivo pela metade
+}
+
+// Quais profiles ja estao no escopo global. Usado pelo indicador e pelo filtro.
+ipcMain.handle('configs:globalStatus', () => {
+  const r = readClaudeGlobal();
+  if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL], profiles: [] };
+  return { ok: true, file: CLAUDE_GLOBAL, profiles: Object.keys(r.json.mcpServers || {}) };
+});
+
 ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
   try {
     const { settings, env } = payload || {};
@@ -383,30 +411,14 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     if (!env) return { ok: false, key: 'be.globalNoEnv' };
 
     const id = envIdOf(env);
-    let raw = '';
-    let json = {};
-    if (fs.existsSync(CLAUDE_GLOBAL)) {
-      raw = fs.readFileSync(CLAUDE_GLOBAL, 'utf8');
-      try {
-        json = JSON.parse(raw);
-      } catch (e) {
-        // arquivo corrompido: nao sobrescreve nada, so avisa
-        return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
-      }
-      fs.writeFileSync(CLAUDE_GLOBAL + '.bak', raw, 'utf8');
-    }
+    const r = readClaudeGlobal();
+    if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
 
+    const json = r.json;
     if (!json.mcpServers || typeof json.mcpServers !== 'object') json.mcpServers = {};
     const existed = Object.prototype.hasOwnProperty.call(json.mcpServers, id);
     json.mcpServers[id] = buildMcpServerEntry(settings, env);
-
-    // mantem o estilo do arquivo (o Claude Code grava identado)
-    const pretty = !raw || /^\{\s*\r?\n/.test(raw);
-    const out = JSON.stringify(json, null, pretty ? 2 : 0);
-
-    const tmp = CLAUDE_GLOBAL + '.tmp';
-    fs.writeFileSync(tmp, out, 'utf8');
-    fs.renameSync(tmp, CLAUDE_GLOBAL); // atomico: nunca deixa o arquivo pela metade
+    writeClaudeGlobal(json, r.raw);
 
     // Mesmo motivo do "Gerar configs": o vsp que o host subiu segura a config
     // antiga em memoria. Sem derrubar, atualizar um profile que ja era global
@@ -420,6 +432,31 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
       profile: id,
       vspKilled: vsp.killed
     };
+  } catch (e) {
+    return { ok: false, key: 'be.globalFail', args: [e.message] };
+  }
+});
+
+// Tira o profile do escopo global. So mexe na chave dele: qualquer outro server
+// que o usuario tenha registrado a mao continua intacto.
+ipcMain.handle('configs:removeGlobal', (_evt, payload) => {
+  try {
+    const { settings, env } = payload || {};
+    if (!env) return { ok: false, key: 'be.globalNoEnv' };
+
+    const id = envIdOf(env);
+    const r = readClaudeGlobal();
+    if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
+
+    const json = r.json;
+    if (!json.mcpServers || !Object.prototype.hasOwnProperty.call(json.mcpServers, id)) {
+      return { ok: false, key: 'be.globalNotThere', args: [id] };
+    }
+    delete json.mcpServers[id];
+    writeClaudeGlobal(json, r.raw);
+
+    const vsp = killVspProcesses(settings || {});
+    return { ok: true, key: 'be.globalRemoved', args: [id, CLAUDE_GLOBAL], profile: id, vspKilled: vsp.killed };
   } catch (e) {
     return { ok: false, key: 'be.globalFail', args: [e.message] };
   }

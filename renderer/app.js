@@ -10,6 +10,7 @@ const loggedIn = new Set();     // profile ids com login SSO OK nesta sessao
 let selectedId = null;          // profile id da conexao aberta no detalhe
 const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
+const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -205,6 +206,7 @@ function renderTree() {
   $('env-count').textContent = all.length;
 
   const q = ($('env-search') && $('env-search').value || '').trim().toLowerCase();
+  const onlyGlobal = $('filter-global') && $('filter-global').checked;
   const matches = (e) => !q ||
     `${e.client_name} ${e.env_name} ${e.url || ''} ${profileId(e)}`.toLowerCase().includes(q);
 
@@ -212,8 +214,11 @@ function renderTree() {
   for (const g of groupedEnvs()) {
     // com filtro ativo, o nome do cliente tambem conta como match do grupo todo
     const groupHit = q && g.name.toLowerCase().includes(q);
-    const items = g.items.filter(({ e }) => groupHit || matches(e));
-    if (q && !items.length) continue; // grupo sem nada a mostrar some da busca
+    const items = g.items
+      .filter(({ e }) => groupHit || matches(e))
+      .filter(({ e }) => !onlyGlobal || globalProfiles.has(profileId(e)));
+    // grupo sem nada a mostrar some quando ha filtro (busca ou "so globais")
+    if ((q || onlyGlobal) && !items.length) continue;
 
     const box = document.createElement('div');
     box.className = 'group';
@@ -269,6 +274,15 @@ function renderTree() {
       label.title = `${id} · ${e.url || ''}`;
 
       row.append(dot, label);
+
+      // marca as que valem em qualquer pasta (registradas no ~/.claude.json)
+      if (globalProfiles.has(id)) {
+        const g = document.createElement('span');
+        g.className = 'global-badge';
+        g.textContent = 'G';
+        g.title = t('card.globalBadge');
+        row.appendChild(g);
+      }
       row.onclick = () => selectEnv(idx);
       itemsBox.appendChild(row);
     }
@@ -353,12 +367,16 @@ function renderDetail() {
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
 
-  // "Gerar global" + o ⓘ que explica no hover o que isso faz de fato
+  // "Gerar global" + o ⓘ que explica no hover o que isso faz de fato.
+  // Se ja estiver registrada, aparece tambem o botao de remover do global.
+  const isGlobal = globalProfiles.has(id);
+  if (isGlobal) mk(t('card.globalRemove'), 'btn-ghost', () => removeGlobal(e));
+
   const globalBox = document.createElement('span');
   globalBox.className = 'with-info';
   const gBtn = document.createElement('button');
-  gBtn.className = 'btn btn-sm';
-  gBtn.textContent = t('card.global');
+  gBtn.className = 'btn btn-sm' + (isGlobal ? ' btn-ok' : '');
+  gBtn.textContent = isGlobal ? t('card.globalAgain') : t('card.global');
   gBtn.onclick = () => generateGlobal(e, gBtn);
   const icon = document.createElement('span');
   icon.className = 'info-icon';
@@ -703,6 +721,30 @@ async function generateGlobal(env, btn) {
   const res = await window.api.generateGlobal({ settings, env });
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
   if (btn) { btn.disabled = false; btn.textContent = label || t('card.global'); }
+  await refreshGlobalStatus(); // re-renderiza com o selo/botao atualizados
+}
+
+async function removeGlobal(env) {
+  const id = profileId(env);
+  if (!(await appConfirm(t('confirm.globalRemove', id)))) return;
+  const res = await window.api.removeGlobal({ settings, env });
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
+  await refreshGlobalStatus();
+}
+
+// Quais conexoes estao no escopo global. Alimenta o selo na arvore, o filtro
+// "so globais" e a escolha entre Gerar/Remover no detalhe.
+async function refreshGlobalStatus() {
+  try {
+    const res = await window.api.globalStatus();
+    globalProfiles.clear();
+    for (const p of (res.profiles || [])) globalProfiles.add(p);
+  } catch (e) { /* sem status: segue sem selo */ }
+  // conta so as que sao conexoes daqui — o arquivo pode ter servers de terceiros
+  const meus = (clients.environments || []).filter(e => globalProfiles.has(profileId(e))).length;
+  const badge = $('global-count');
+  if (badge) badge.textContent = meus;
+  render();
 }
 
 async function doTest(env, btn) {
@@ -793,6 +835,7 @@ function bind() {
   $('btn-import').onclick    = openImport;
   $('btn-toggle-all').onclick = toggleAllGroups;
   $('env-search').oninput    = renderTree;
+  $('filter-global').onchange = renderTree;
 
   // import
   $('import-search').oninput = renderImport;
@@ -896,6 +939,7 @@ async function init() {
   fillSettings();
   render();
   await refreshCookieStatus();
+  await refreshGlobalStatus();
   await initUpdates();
   setStatus(t('status.ready'));
 }
