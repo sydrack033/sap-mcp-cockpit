@@ -12,7 +12,6 @@ const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nest
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
 const localFolders = new Set();   // pastas que ja tem .mcp.json
-let pendingMcpMenu = null;      // profile id cujo menu "Habilitar MCP" deve abrir no proximo render
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -455,10 +454,7 @@ function renderDetail() {
   mBtn.title = t('mcp.enable.title');
 
   const mMenu = document.createElement('div');
-  // depois de um login SSO o menu ja abre sozinho nesta conexao
-  const abrirAgora = pendingMcpMenu === id;
-  mMenu.className = 'menu menu-wide' + (abrirAgora ? '' : ' hidden');
-  if (abrirAgora) pendingMcpMenu = null;
+  mMenu.className = 'menu menu-wide hidden';
   for (const escopo of ['global', 'local']) {
     const ativo = escopo === 'global' ? isGlobal : isLocal;
     const item = document.createElement('button');
@@ -928,14 +924,9 @@ async function doLogin(env, btn) {
     btn.textContent = res.ok ? t('card.loginOk') : t('card.login');
   }
 
-  // Cookie novo em maos: o vsp velho ja foi derrubado pelo main, entao o host
-  // vai subir com o cookie novo. Abre o menu Habilitar MCP pra confirmar o
-  // escopo — so faz sentido em Public: em Private nada muda entre logins.
-  if (res.ok && env.auth_type === 'cloud') {
-    selectedId = id;
-    pendingMcpMenu = id;
-    render();
-  }
+  // Nada mais a fazer: o main ja derrubou o vsp velho ao salvar o cookie, entao
+  // o host sobe com o cookie novo sozinho. A config nao muda — ela guarda o
+  // CAMINHO do cookie, e o arquivo e o mesmo de sempre.
 }
 
 // ---------------------------------------------------------------------------
