@@ -399,15 +399,11 @@ function killVspProcesses(settings) {
 // ---------------------------------------------------------------------------
 const CLAUDE_GLOBAL = path.join(os.homedir(), '.claude.json');
 
-function buildMcpServerEntry(settings, e, folder) {
-  const launch = buildServerLaunch(settings, e, folder);
-  const entry = { type: 'stdio', command: launch.command, args: launch.args };
-  const envMap = Object.assign({}, launch.env);
-  if (e.auth_type === 'onprem' && e.password) {
-    for (const v of passwordVarsOf(envIdOf(e))) envMap[v] = e.password;
-  }
-  if (Object.keys(envMap).length) entry.env = envMap;
-  return entry;
+// Entrada MCP no formato HTTP: o host so guarda a URL, e quem mantem o processo
+// vivo e o Cockpit. `type` e OBRIGATORIO — a doc do Claude Code diz que entrada
+// com `url` e sem `type` e erro de config e o server e ignorado.
+function buildHttpServerEntry(id) {
+  return { type: 'http', url: serverUrl(ensurePort(id)) };
 }
 
 // Le o ~/.claude.json. Devolve { json, raw } ou { error } — nunca lanca, pra
@@ -430,6 +426,137 @@ function writeClaudeGlobal(json, raw) {
   fs.writeFileSync(tmp, JSON.stringify(json, null, pretty ? 2 : 0), 'utf8');
   fs.renameSync(tmp, CLAUDE_GLOBAL); // nunca deixa o arquivo pela metade
 }
+
+// ---------------------------------------------------------------------------
+// Supervisor dos servidores vsp em HTTP
+//
+// POR QUE existe: um MCP stdio e um processo que o HOST sobe, e a documentacao
+// do Claude Code e clara — servidor stdio que cai NUNCA reconecta; ele marca
+// como falho e pronto. Ja servidor HTTP reconecta sozinho (backoff exponencial,
+// ate 5 tentativas). Como o vsp segura o cookie em memoria, renovar o login
+// exige reiniciar o processo — e so em HTTP isso e transparente pra uma
+// conversa que ja esta aberta.
+//
+// O preco: em HTTP o processo precisa JA estar rodando, entao quem mantem vivo
+// e o Cockpit. Fechou o Cockpit, os servidores caem.
+//
+// O endpoint do vsp e /mcp (confirmado no handshake).
+// ---------------------------------------------------------------------------
+const PORT_BASE = 39000;
+const PORT_SPAN = 900;
+
+// id -> { proc, port, startedAt }
+const running = new Map();
+
+function hashId(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+// Porta estavel por conexao: sai do hash do profile id, entao a mesma conexao
+// cai sempre na mesma porta e a URL gravada na config continua valendo entre
+// reinicios. Colisao anda pra proxima livre.
+function portFor(id, usadas) {
+  const inicio = PORT_BASE + (hashId(id) % PORT_SPAN);
+  for (let i = 0; i < PORT_SPAN; i++) {
+    const p = PORT_BASE + ((inicio - PORT_BASE + i) % PORT_SPAN);
+    if (!usadas.has(p)) return p;
+  }
+  return inicio;
+}
+
+function serverUrl(port) {
+  return `http://127.0.0.1:${port}/mcp`;
+}
+
+// Porta de uma conexao, alocada na primeira vez e reaproveitada depois.
+const portas = new Map(); // id -> porta
+function ensurePort(id) {
+  if (portas.has(id)) return portas.get(id);
+  const p = portFor(id, new Set(portas.values()));
+  portas.set(id, p);
+  return p;
+}
+
+function stopServer(id) {
+  const s = running.get(id);
+  if (!s) return false;
+  try { s.proc.kill(); } catch (e) { /* ja morreu */ }
+  running.delete(id);
+  return true;
+}
+
+function startServer(settings, env, folder) {
+  const id = envIdOf(env);
+  stopServer(id); // reiniciar = derrubar o antigo primeiro
+
+  const port = ensurePort(id);
+  const args = buildMcpArgs(settings, env, folder)
+    .concat(['--transport', 'http', '--http-addr', `127.0.0.1:${port}`]);
+
+  let proc;
+  try {
+    proc = spawn(settings.vsp_path, args, {
+      cwd: folder || undefined,
+      detached: false,        // morre junto com o Cockpit, que e o combinado
+      stdio: 'ignore'
+    });
+  } catch (e) {
+    return { ok: false, key: 'be.serverStartFail', args: [id, e.message] };
+  }
+  proc.on('error', () => running.delete(id));
+  proc.on('exit', () => { if (running.get(id) && running.get(id).proc === proc) running.delete(id); });
+
+  running.set(id, { proc, port, startedAt: Date.now() });
+  return { ok: true, port, url: serverUrl(port) };
+}
+
+// Encerra tudo ao sair: sao processos filhos nossos, nao podem ficar orfaos.
+app.on('before-quit', () => {
+  for (const id of [...running.keys()]) stopServer(id);
+});
+
+ipcMain.handle('server:start', (_evt, payload) => {
+  const { settings, env } = payload || {};
+  if (!env) return { ok: false, key: 'be.globalNoEnv' };
+  const folder = folderOfEnv(env);
+  if (!folder) return { ok: false, key: 'be.noFolderForConn' };
+  const r = startServer(settings, env, folder);
+  return r.ok ? { ok: true, key: 'be.serverStarted', args: [envIdOf(env), r.port], port: r.port } : r;
+});
+
+ipcMain.handle('server:stop', (_evt, payload) => {
+  const { env } = payload || {};
+  if (!env) return { ok: false, key: 'be.globalNoEnv' };
+  const id = envIdOf(env);
+  return stopServer(id)
+    ? { ok: true, key: 'be.serverStopped', args: [id] }
+    : { ok: false, key: 'be.serverNotRunning', args: [id] };
+});
+
+ipcMain.handle('server:status', () => {
+  const out = {};
+  for (const [id, s] of running) out[id] = { port: s.port, url: serverUrl(s.port), startedAt: s.startedAt };
+  return { ok: true, running: out };
+});
+
+// Sobe de uma vez os servidores das conexoes que estao habilitadas. Chamado ao
+// abrir o app: sem isso as URLs gravadas na config apontariam pra portas mortas.
+ipcMain.handle('server:startEnabled', (_evt, payload) => {
+  const { settings, envs } = payload || {};
+  const iniciados = [];
+  const falhas = [];
+  for (const e of (envs || [])) {
+    const id = envIdOf(e);
+    if (running.has(id)) continue; // ja no ar
+    const folder = folderOfEnv(e);
+    if (!folder) continue;
+    const r = startServer(settings, e, folder);
+    if (r.ok) iniciados.push(id); else falhas.push(id);
+  }
+  return { ok: true, started: iniciados, failed: falhas };
+});
 
 // ---------------------------------------------------------------------------
 // Aprovacao dos servers de PROJETO (.mcp.json)
@@ -490,13 +617,18 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     const json = r.json;
     if (!json.mcpServers || typeof json.mcpServers !== 'object') json.mcpServers = {};
     const existed = Object.prototype.hasOwnProperty.call(json.mcpServers, id);
-    json.mcpServers[id] = buildMcpServerEntry(settings, env, env.folder);
+    json.mcpServers[id] = buildHttpServerEntry(id);
     writeClaudeGlobal(json, r.raw);
+
+
 
     // Mesmo motivo do "Gerar configs": o vsp que o host subiu segura a config
     // antiga em memoria. Sem derrubar, atualizar um profile que ja era global
     // nao teria efeito nenhum. Depois da escrita, pra nao respawnar no meio.
+    // kill antes de subir: ele pega qualquer vsp pelo nome da imagem,
+    // entao subir primeiro derrubaria o nosso proprio servidor
     const vsp = killVspProcesses(settings);
+    if (env.folder) startServer(settings, env, env.folder);
 
     return {
       ok: true,
@@ -655,7 +787,7 @@ function generateWorkspace(settings, folder, envs) {
   // A senha on-prem vai no bloco `env` do server: o host MCP NAO carrega o
   // .env, entao sem isso o server sobe sem senha e a auth falha (zero tools).
   const mcpServers = {};
-  for (const e of envs) mcpServers[envIdOf(e)] = buildMcpServerEntry(settings, e, folder);
+  for (const e of envs) mcpServers[envIdOf(e)] = buildHttpServerEntry(envIdOf(e));
   writeJson(path.join(folder, '.mcp.json'), { mcpServers });
 
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
@@ -706,7 +838,11 @@ ipcMain.handle('mcp:enableLocal', (_evt, payload) => {
     // projeto so carrega depois de aprovado.
     const aprov = setProjectApproval(folder, lista.map(envIdOf), true);
 
+    // ORDEM IMPORTA: o kill e por nome de imagem e pega QUALQUER vsp,
+    // inclusive os nossos. Limpa o que o host tenha subido em stdio primeiro,
+    // e so entao levanta os servidores supervisionados.
     const vsp = killVspProcesses(settings);
+    for (const e of lista) startServer(settings, e, folder);
     return {
       ok: true,
       key: 'be.localEnabled',
@@ -977,18 +1113,30 @@ ipcMain.handle('vsp:login', (_evt, payload) => {
       resolve(res);
     };
     const ok = (extra) => {
-      // O cookie novo ja esta no disco, mas o vsp que o host MCP subiu ainda
-      // segura o ANTIGO em memoria — relogar sem derrubar nao surte efeito
-      // nenhum. A config em si NAO fica velha: ela guarda o CAMINHO do cookie,
-      // e o arquivo e sempre o mesmo, sobrescrito a cada login.
-      // Aqui e seguro: so chega neste ponto com o cookie ja capturado e estavel.
-      const vsp = killVspProcesses(settings);
+      // O cookie novo ja esta no disco, mas o vsp segura o ANTIGO em memoria —
+      // relogar sem reiniciar o processo nao surte efeito nenhum. A config em si
+      // NAO fica velha: ela guarda o CAMINHO do cookie, e o arquivo e sempre o
+      // mesmo, sobrescrito a cada login.
+      //
+      // Se o servidor HTTP desta conexao esta no ar, REINICIA so ele: o Claude
+      // Code reconecta sozinho (isso e o que faz uma conversa ja aberta voltar a
+      // funcionar). Se nao esta, cai no kill geral do vsp, que cobre quem ainda
+      // usa stdio.
+      const id = envIdOf(env);
+      let reiniciado = false;
+      let mortos = 0;
+      if (running.has(id)) {
+        reiniciado = startServer(settings, env, projectPath).ok;
+      } else {
+        mortos = killVspProcesses(settings).killed;
+      }
       finish({
         ok: true,
         key: 'be.loginOk',
         args: [path.basename(cookieFile)],
         log: out,
-        vspKilled: vsp.killed,
+        vspKilled: mortos,
+        serverRestarted: reiniciado,
         ...extra
       });
     };
