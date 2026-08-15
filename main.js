@@ -194,7 +194,7 @@ function buildInstructionsMd(envs) {
   L.push('- Cada ambiente abaixo e um servidor MCP de nome `<profile>`; as ferramentas dele');
   L.push('  aparecem com o prefixo `mcp__<profile>__*`.');
   L.push('- Config gerada pelo SAP MCP Cockpit (nao edite a mao): `.vsp.json` (URLs + cookie/');
-  L.push('  usuario + insecure), `.mcp.json` (Claude Code), `~/.codex/config.toml` (Codex, global), `.env`.');
+  L.push('  usuario + insecure), `~/.claude.json` (Claude Code, global), `~/.codex/config.toml` (Codex, global), `.env`.');
   L.push('  A senha on-prem ja vai no bloco `env` do server MCP — nao precisa carregar `.env` na mao.');
   L.push('- Cookies de SSO dos ambientes Cloud ficam em `cookies-<profile>.txt`.');
   L.push('- **Codex:** os servers MCP vao no seu `~/.codex/config.toml` GLOBAL (o Cockpit mantem um');
@@ -383,15 +383,22 @@ function killVspProcesses(settings) {
 }
 
 // ---------------------------------------------------------------------------
-// Registrar UMA conexao no escopo GLOBAL do Claude Code.
+// Registrar UMA conexao no escopo GLOBAL (user) do Claude Code: ~/.claude.json,
+// chave mcpServers do topo. Vale em qualquer pasta.
 //
-// O "Gerar configs" escreve .mcp.json na pasta do projeto — escopo de projeto:
-// o server so existe quando o Claude Code roda dentro daquela pasta. O escopo
-// user fica em ~/.claude.json, na chave mcpServers do topo, e vale em qualquer
-// pasta.
+// Esse e o UNICO escopo que o Cockpit usa, e a razao e dura: um server
+// declarado no .mcp.json da pasta (escopo de PROJETO) fica em "Pending
+// approval" e nenhuma escrita em arquivo libera. Testados e reprovados no
+// Claude Code 2.1.229:
+//   ~/.claude.json -> projects[<pasta>].enabledMcpjsonServers
+//   <pasta>/.claude/settings.local.json -> enabledMcpjsonServers
+//   <pasta>/.claude/settings.local.json -> enableAllProjectMcpServers: true
+// So o prompt interativo do `claude` aprova — e ele volta a perguntar sempre
+// que o .mcp.json muda, ou seja, regerar a config derrubava o que funcionava.
+// Prova, mesmo binario e cookie: escopo user -> Connected; projeto -> Pending.
 //
-// Isso funciona porque buildMcpArgs ja monta a conexao COMPLETA e com caminho
-// ABSOLUTO do cookie — a entrada nao depende do cwd.
+// Escopo user funciona porque buildMcpArgs monta a conexao COMPLETA e com
+// caminho ABSOLUTO do cookie — a entrada nao depende do cwd.
 //
 // Cuidado com esse arquivo: ele guarda o estado inteiro do Claude Code (dezenas
 // de KB, historico por projeto, conta). Por isso: le, mexe so em mcpServers,
@@ -432,17 +439,21 @@ function writeClaudeGlobal(json, raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Aprovacao dos servers de PROJETO (.mcp.json)
+// Faxina do escopo de PROJETO que as versoes antigas deixaram pra tras.
 //
-// O Claude Code nao carrega um server vindo de .mcp.json enquanto ele nao for
-// aprovado — e o silencio nao explica nada: as tools simplesmente nao existem.
-// A aprovacao mora em ~/.claude.json -> projects[<pasta>].enabledMcpjsonServers.
-// Sem gravar isso, escrever o .mcp.json nao bastava.
+// Ate a 2.1.1 o Cockpit gravava um .mcp.json na pasta e tentava pre-aprovar em
+// ~/.claude.json. A aprovacao nunca teve efeito (ver bloco acima), e o que
+// sobrou atrapalha de verdade: um server que existe nos DOIS escopos faz o
+// Claude Code reclamar de "conflicting scopes", e o de projeto fica pendurado
+// em "pending approval" pra sempre.
 //
-// A chave da pasta aparece nos DOIS formatos no arquivo real (c:/Users/... e
-// C:\Users\...), dependendo de quem gravou — aqui tem 19 de um e 14 do outro,
-// com pastas repetidas nas duas formas. Gravamos nas duas pra nao depender de
-// adivinhar qual o host vai consultar.
+// Some so com o QUE E NOSSO: a chave do profile no .mcp.json (o arquivo so e
+// apagado se ficar sem nenhum server) e o id nas listas de aprovacao. Server
+// que o usuario tenha declarado a mao fica intacto.
+//
+// A chave da pasta aparece nos dois formatos no arquivo real (C:\Users\... e
+// C:/Users/...) porque nos mesmos gravavamos nos dois — por isso a limpeza
+// varre as duas formas.
 // ---------------------------------------------------------------------------
 function projectKeys(dir) {
   const nativo = path.resolve(dir);          // C:\Users\...
@@ -450,24 +461,42 @@ function projectKeys(dir) {
   return [...new Set([nativo, barra])];
 }
 
-function setProjectApproval(dir, ids, aprovar) {
-  const r = readClaudeGlobal();
-  if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
+function cleanProjectScope(dir, ids) {
+  const out = { mcpJson: false, approval: false };
+  if (!dir || !ids || !ids.length) return out;
 
-  const json = r.json;
-  if (!json.projects || typeof json.projects !== 'object') json.projects = {};
-  for (const k of projectKeys(dir)) {
-    const p = json.projects[k] || (json.projects[k] = {});
-    const atual = Array.isArray(p.enabledMcpjsonServers) ? p.enabledMcpjsonServers : [];
-    p.enabledMcpjsonServers = aprovar
-      ? [...new Set([...atual, ...ids])]
-      : atual.filter(x => !ids.includes(x));
-    if (!Array.isArray(p.disabledMcpjsonServers)) p.disabledMcpjsonServers = [];
-    // hasTrustDialogAccepted NAO e mexido de proposito: e o "confia nesta
-    // pasta?", uma decisao de seguranca que cabe ao usuario responder.
-  }
-  writeClaudeGlobal(json, r.raw);
-  return { ok: true };
+  // 1. tira os profiles do .mcp.json da pasta
+  try {
+    const alvo = path.join(dir, '.mcp.json');
+    if (fs.existsSync(alvo)) {
+      const j = JSON.parse(fs.readFileSync(alvo, 'utf8'));
+      const servers = j.mcpServers || {};
+      let mexeu = false;
+      for (const id of ids) if (Object.prototype.hasOwnProperty.call(servers, id)) { delete servers[id]; mexeu = true; }
+      if (mexeu) {
+        out.mcpJson = true;
+        if (Object.keys(servers).length) writeJson(alvo, j);
+        else fs.unlinkSync(alvo); // ficou vazio: nao deixa arquivo inutil na pasta
+      }
+    }
+  } catch (e) { /* .mcp.json ilegivel/alheio: nao e nosso, deixa quieto */ }
+
+  // 2. tira os ids das listas de aprovacao que gravamos antes
+  try {
+    const r = readClaudeGlobal();
+    if (!r.error && r.json.projects) {
+      let mexeu = false;
+      for (const k of projectKeys(dir)) {
+        const p = r.json.projects[k];
+        if (!p || !Array.isArray(p.enabledMcpjsonServers)) continue;
+        const filtrado = p.enabledMcpjsonServers.filter(x => !ids.includes(x));
+        if (filtrado.length !== p.enabledMcpjsonServers.length) { p.enabledMcpjsonServers = filtrado; mexeu = true; }
+      }
+      if (mexeu) { writeClaudeGlobal(r.json, r.raw); out.approval = true; }
+    }
+  } catch (e) { /* idem */ }
+
+  return out;
 }
 
 // Quais profiles ja estao no escopo global. Usado pelo indicador e pelo filtro.
@@ -477,9 +506,12 @@ ipcMain.handle('configs:globalStatus', () => {
   return { ok: true, file: CLAUDE_GLOBAL, profiles: Object.keys(r.json.mcpServers || {}) };
 });
 
+// Habilitar MCP: registra a conexao no escopo global e, se ela tem pasta,
+// (re)grava os arquivos de apoio do workspace. `envs` deve trazer TODAS as
+// conexoes que dividem a pasta — o .vsp.json lista todas.
 ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
   try {
-    const { settings, env } = payload || {};
+    const { settings, env, envs } = payload || {};
     if (!env) return { ok: false, key: 'be.globalNoEnv' };
     if (env.auth_type === 'cloud' && !env.folder) return { ok: false, key: 'be.noFolderForConn' };
 
@@ -493,9 +525,20 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     json.mcpServers[id] = buildMcpServerEntry(settings, env, env.folder);
     writeClaudeGlobal(json, r.raw);
 
-    // Mesmo motivo do "Gerar configs": o vsp que o host subiu segura a config
-    // antiga em memoria. Sem derrubar, atualizar um profile que ja era global
-    // nao teria efeito nenhum. Depois da escrita, pra nao respawnar no meio.
+    // Arquivos de apoio da pasta (sem .mcp.json): .vsp.json, CLAUDE.md, etc.
+    let files = null;
+    if (env.folder) {
+      const daPasta = (envs && envs.length) ? envs : [env];
+      const ws = generateWorkspace(settings, env.folder, daPasta);
+      if (ws.ok) files = ws.files;
+      // sobra de versao antiga: mesmo profile no escopo de projeto vira
+      // "conflicting scopes" e fica preso em "pending approval"
+      cleanProjectScope(env.folder, [id]);
+    }
+
+    // O vsp que o host subiu segura a config antiga em memoria. Sem derrubar,
+    // atualizar um profile que ja era global nao teria efeito nenhum. Depois
+    // da escrita, pra nao respawnar no meio.
     const vsp = killVspProcesses(settings);
 
     return {
@@ -503,6 +546,7 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
       key: existed ? 'be.globalUpdated' : 'be.globalAdded',
       args: [id, CLAUDE_GLOBAL],
       profile: id,
+      files,
       vspKilled: vsp.killed
     };
   } catch (e) {
@@ -633,10 +677,11 @@ ipcMain.handle('sap:landscape', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Geracao dos arquivos de um WORKSPACE.
+// Geracao dos arquivos de apoio de um WORKSPACE (.vsp.json, CLAUDE.md,
+// AGENTS.md, .env, .gitignore). O server MCP nao esta aqui — ele e global.
 //
 // A unidade e a PASTA, nao a conexao: duas conexoes que apontam pra mesma pasta
-// compartilham um workspace so, e o .mcp.json dela lista as duas. Por isso quem
+// compartilham um workspace so, e o .vsp.json dela lista as duas. Por isso quem
 // chama precisa passar TODAS as conexoes daquela pasta — gravar so a conexao
 // clicada apagaria as outras do arquivo.
 // ---------------------------------------------------------------------------
@@ -651,12 +696,9 @@ function generateWorkspace(settings, folder, envs) {
   if (envs.length) vspJson.default = envIdOf(envs[0]);
   writeJson(path.join(folder, '.vsp.json'), vspJson);
 
-  // ---- .mcp.json (Claude Code - um server por ambiente) ----
-  // A senha on-prem vai no bloco `env` do server: o host MCP NAO carrega o
-  // .env, entao sem isso o server sobe sem senha e a auth falha (zero tools).
-  const mcpServers = {};
-  for (const e of envs) mcpServers[envIdOf(e)] = buildMcpServerEntry(settings, e, folder);
-  writeJson(path.join(folder, '.mcp.json'), { mcpServers });
+  // Nao existe .mcp.json aqui de proposito: server de projeto nao carrega sem
+  // aprovacao interativa. O server MCP vai pro escopo global (~/.claude.json),
+  // que e o que de fato conecta — inclusive dentro desta pasta.
 
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
   const instructions = buildInstructionsMd(envs);
@@ -685,75 +727,13 @@ function generateWorkspace(settings, folder, envs) {
 
   return {
     ok: true,
-    files: ['.vsp.json', '.mcp.json', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
+    files: ['.vsp.json', '.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md'],
     count: envs.length
   };
 }
 
-// Habilitar MCP LOCAL: grava o workspace da pasta desta conexao, com todas as
-// conexoes que dividem a mesma pasta.
-ipcMain.handle('mcp:enableLocal', (_evt, payload) => {
-  try {
-    const { settings, folder, envs } = payload || {};
-    if (!folder) return { ok: false, key: 'be.noFolderForConn' };
-    const lista = envs || [];
-    if (!lista.length) return { ok: false, key: 'be.globalNoEnv' };
-
-    const res = generateWorkspace(settings, folder, lista);
-    if (!res.ok) return res;
-
-    // Sem isso o Claude Code ignora o .mcp.json recem-escrito: server de
-    // projeto so carrega depois de aprovado.
-    const aprov = setProjectApproval(folder, lista.map(envIdOf), true);
-
-    const vsp = killVspProcesses(settings);
-    return {
-      ok: true,
-      key: 'be.localEnabled',
-      args: [folder, lista.length],
-      vspKilled: vsp.killed,
-      files: res.files,
-      approved: aprov.ok
-    };
-  } catch (e) {
-    return { ok: false, key: 'be.genError', args: [e.message] };
-  }
-});
-
-// Desabilitar MCP local: apaga so o .mcp.json da pasta. Os outros arquivos
-// (CLAUDE.md, .env, .vsp.json) ficam — o usuario pode ter editado, e sao eles
-// que fazem o workspace continuar util fora do MCP.
-ipcMain.handle('mcp:disableLocal', (_evt, payload) => {
-  try {
-    const { settings, folder } = payload || {};
-    if (!folder) return { ok: false, key: 'be.noFolderForConn' };
-    const alvo = path.join(folder, '.mcp.json');
-    if (!fs.existsSync(alvo)) return { ok: false, key: 'be.localNotThere', args: [folder] };
-
-    // le os ids ANTES de apagar, pra tirar a aprovacao dos mesmos servers
-    let ids = [];
-    try { ids = Object.keys(JSON.parse(fs.readFileSync(alvo, 'utf8')).mcpServers || {}); } catch (e) {}
-    fs.unlinkSync(alvo);
-    if (ids.length) setProjectApproval(folder, ids, false);
-
-    const vsp = killVspProcesses(settings);
-    return { ok: true, key: 'be.localDisabled', args: [folder], vspKilled: vsp.killed };
-  } catch (e) {
-    return { ok: false, key: 'be.genError', args: [e.message] };
-  }
-});
-
-// Quais pastas ja tem .mcp.json — alimenta o selo "local" na arvore.
-ipcMain.handle('mcp:localStatus', (_evt, folders) => {
-  const out = {};
-  for (const f of (folders || [])) {
-    try { out[f] = fs.existsSync(path.join(f, '.mcp.json')); } catch (e) { out[f] = false; }
-  }
-  return { ok: true, folders: out };
-});
-
-// Codex so le MCP do config GLOBAL — nao existe equivalente por projeto. Por
-// isso o "local" nao vale pra ele, e o "global" mexe nos dois arquivos.
+// Codex tambem so le MCP do config GLOBAL dele — nao existe equivalente por
+// projeto em nenhum dos dois hosts.
 ipcMain.handle('mcp:syncCodex', (_evt, payload) => {
   try {
     const { settings, envs } = payload || {};

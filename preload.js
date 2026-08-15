@@ -16,13 +16,12 @@ contextBridge.exposeInMainWorld('api', {
   pickFolder: (opts)       => ipcRenderer.invoke('dialog:pickFolder', opts),
 
   // actions
-  // Habilitar MCP: global (~/.claude.json + Codex) ou local (.mcp.json na pasta)
+  // Habilitar MCP: escopo global (~/.claude.json + Codex). Escopo de projeto
+  // (.mcp.json na pasta) nao existe mais — nao ha como pre-aprovar, o server
+  // ficava em "pending approval" e nunca subia.
   generateGlobal: (p)      => ipcRenderer.invoke('configs:generateGlobal', p),
   removeGlobal: (p)        => ipcRenderer.invoke('configs:removeGlobal', p),
   globalStatus: ()         => ipcRenderer.invoke('configs:globalStatus'),
-  enableLocal: (p)         => ipcRenderer.invoke('mcp:enableLocal', p),
-  disableLocal: (p)        => ipcRenderer.invoke('mcp:disableLocal', p),
-  localStatus: (folders)   => ipcRenderer.invoke('mcp:localStatus', folders),
   syncCodex: (p)           => ipcRenderer.invoke('mcp:syncCodex', p),
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),

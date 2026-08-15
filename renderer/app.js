@@ -12,7 +12,6 @@ let selectedId = null;          // profile id da conexao aberta no detalhe
 const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
-const localFolders = new Set();   // pastas que ja tem .mcp.json
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -264,9 +263,8 @@ function renderTree() {
     const groupHit = q && g.name.toLowerCase().includes(q);
     const items = g.items
       .filter(({ e }) => groupHit || matches(e))
-      .filter(({ e }) => !onlyGlobal ||
-        globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name)));
-    // grupo sem nada a mostrar some quando ha filtro (busca ou "so globais")
+      .filter(({ e }) => !onlyGlobal || globalProfiles.has(profileId(e)));
+    // grupo sem nada a mostrar some quando ha filtro (busca ou "so habilitadas")
     if ((q || onlyGlobal) && !items.length) continue;
 
     const box = document.createElement('div');
@@ -339,19 +337,12 @@ function renderTree() {
 
       row.append(dot, label);
 
-      // selos de onde o MCP esta habilitado: G = global, L = na pasta
+      // selo de MCP habilitado
       if (globalProfiles.has(id)) {
         const b = document.createElement('span');
         b.className = 'global-badge';
-        b.textContent = 'G';
+        b.textContent = '✓';
         b.title = t('card.globalBadge');
-        row.appendChild(b);
-      }
-      if (localFolders.has(folderOf(e.client_name))) {
-        const b = document.createElement('span');
-        b.className = 'global-badge local';
-        b.textContent = 'L';
-        b.title = t('card.localBadge', folderOf(e.client_name));
         row.appendChild(b);
       }
       row.onclick = () => selectEnv(idx);
@@ -463,40 +454,15 @@ function renderDetail() {
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
 
-  // "Habilitar MCP": menu com Global e Local, cada um com a descricao do que
-  // faz. O item ja habilitado vira a acao de desabilitar.
+  // "Habilitar MCP": um botao so. So existe escopo global — o de projeto nao
+  // tem como ser pre-aprovado, entao nao ha escolha a oferecer.
   const isGlobal = globalProfiles.has(id);
-  const dirDaConn = folderOf(e.client_name);
-  const isLocal = !!(dirDaConn && localFolders.has(dirDaConn));
-
-  const mcpBox = document.createElement('span');
-  mcpBox.className = 'dropdown';
   const mBtn = document.createElement('button');
-  mBtn.className = 'btn btn-sm' + (isGlobal || isLocal ? ' btn-ok' : '');
-  const marcas = [isGlobal && t('mcp.global'), isLocal && t('mcp.local')].filter(Boolean);
-  mBtn.textContent = (marcas.length ? '✓ ' + marcas.join(' + ') : t('mcp.enable')) + ' ▾';
-  mBtn.title = t('mcp.enable.title');
-
-  const mMenu = document.createElement('div');
-  mMenu.className = 'menu menu-wide hidden';
-  for (const escopo of ['global', 'local']) {
-    const ativo = escopo === 'global' ? isGlobal : isLocal;
-    const item = document.createElement('button');
-    item.className = 'menu-item mcp-opt' + (ativo ? ' on' : '');
-    const titulo = document.createElement('span');
-    titulo.className = 'mcp-opt-title';
-    titulo.textContent = (ativo ? '✓ ' : '') + t('mcp.' + escopo) +
-      (ativo ? ' — ' + t('mcp.clickDisable') : '');
-    const desc = document.createElement('span');
-    desc.className = 'mcp-opt-desc';
-    desc.innerHTML = t('mcp.' + escopo + '.desc', dirDaConn || t('mcp.noFolder'));
-    item.append(titulo, desc);
-    item.onclick = () => toggleMcp(e, escopo, ativo);
-    mMenu.appendChild(item);
-  }
-  mBtn.onclick = (ev) => { ev.stopPropagation(); closeMenus(mMenu); mMenu.classList.toggle('hidden'); };
-  mcpBox.append(mBtn, mMenu);
-  actions.appendChild(mcpBox);
+  mBtn.className = 'btn btn-sm' + (isGlobal ? ' btn-ok' : '');
+  mBtn.textContent = isGlobal ? '✓ ' + t('mcp.enabled') : t('mcp.enable');
+  mBtn.title = isGlobal ? t('mcp.disable.title') : t('mcp.enable.title');
+  mBtn.onclick = () => toggleMcp(e, isGlobal);
+  actions.appendChild(mBtn);
 
   mk(t('card.remove'), 'btn-ghost', () => removeEnv(idx));
 
@@ -858,49 +824,40 @@ function withFolder(e) {
   return Object.assign({}, e, { folder: folderOf(e.client_name) });
 }
 
-// Liga/desliga o MCP da conexao no escopo escolhido.
-async function toggleMcp(env, escopo, jaAtivo) {
+// Liga/desliga o MCP da conexao (escopo global).
+async function toggleMcp(env, jaAtivo) {
   closeMenus();
   readSettingsFromForm();
   await window.api.saveSettings(settings);
 
-  // as duas pontas precisam da pasta: o global pro cookie, o local pra gravar
+  // a pasta e onde fica o cookie e os arquivos de apoio do workspace
   const dir = await ensureFolder(env.client_name);
   if (!dir) { setStatus(t('msg.folderNeeded', env.client_name), 'warn'); return; }
 
   let res;
-  if (escopo === 'global') {
-    res = jaAtivo
-      ? (await appConfirm(t('confirm.globalRemove', profileId(env))))
-        ? await window.api.removeGlobal({ settings, env: withFolder(env) })
-        : null
-      : await window.api.generateGlobal({ settings, env: withFolder(env) });
-    // Codex so le do config global: acompanha o escopo global, nunca o local
-    if (res && res.ok) {
-      const todas = (clients.environments || []).filter(x => globalProfiles.has(profileId(x)) || profileId(x) === profileId(env));
-      await window.api.syncCodex({ settings, envs: todas.map(withFolder) });
-    }
+  if (jaAtivo) {
+    res = (await appConfirm(t('confirm.globalRemove', profileId(env))))
+      ? await window.api.removeGlobal({ settings, env: withFolder(env) })
+      : null;
   } else {
-    if (jaAtivo) {
-      res = (await appConfirm(t('confirm.localRemove', dir)))
-        ? await window.api.disableLocal({ settings, folder: dir })
-        : null;
-    } else {
-      // TODAS as conexoes que dividem esta pasta: gravar so a clicada apagaria
-      // as outras do .mcp.json
-      const daPasta = (clients.environments || []).filter(x => folderOf(x.client_name) === dir);
-      res = await window.api.enableLocal({ settings, folder: dir, envs: daPasta.map(withFolder) });
-    }
+    // TODAS as conexoes que dividem esta pasta: o .vsp.json lista todas, e
+    // gravar so a clicada apagaria as outras do arquivo
+    const daPasta = (clients.environments || []).filter(x => folderOf(x.client_name) === dir);
+    res = await window.api.generateGlobal({ settings, env: withFolder(env), envs: daPasta.map(withFolder) });
   }
   if (!res) return; // usuario cancelou a confirmacao
-  // aprovacao gravada? senao o Claude Code vai perguntar e o server nao sobe sozinho
-  if (res.ok && res.approved === false) { setStatus(t('be.localNotApproved'), 'warn'); await refreshMcpStatus(); return; }
+
+  // Codex le MCP so do config global dele: acompanha na mesma acao
+  if (res.ok) {
+    const todas = (clients.environments || []).filter(x => globalProfiles.has(profileId(x)) || profileId(x) === profileId(env));
+    await window.api.syncCodex({ settings, envs: todas.map(withFolder) });
+  }
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
   await refreshMcpStatus();
 }
 
-// Onde cada conexao esta habilitada: global (~/.claude.json) e/ou local
-// (.mcp.json na pasta). Alimenta os selos, o filtro e o menu do detalhe.
+// Quais conexoes estao habilitadas no escopo global (~/.claude.json).
+// Alimenta o selo, o filtro e o botao do detalhe.
 async function refreshMcpStatus() {
   try {
     const res = await window.api.globalStatus();
@@ -908,16 +865,8 @@ async function refreshMcpStatus() {
     for (const p of (res.profiles || [])) globalProfiles.add(p);
   } catch (e) { /* sem status: segue sem selo */ }
 
-  try {
-    const pastas = [...new Set(Object.values(clients.folders || {}))].filter(Boolean);
-    const res = await window.api.localStatus(pastas);
-    localFolders.clear();
-    for (const [dir, tem] of Object.entries((res && res.folders) || {})) if (tem) localFolders.add(dir);
-  } catch (e) { /* idem */ }
-
   // conta so as conexoes DAQUI — o ~/.claude.json pode ter servers de terceiros
-  const meus = (clients.environments || []).filter(e =>
-    globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name))).length;
+  const meus = (clients.environments || []).filter(e => globalProfiles.has(profileId(e))).length;
   const badge = $('global-count');
   if (badge) badge.textContent = meus;
   render();
