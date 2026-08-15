@@ -24,12 +24,6 @@ contextBridge.exposeInMainWorld('api', {
   disableLocal: (p)        => ipcRenderer.invoke('mcp:disableLocal', p),
   localStatus: (folders)   => ipcRenderer.invoke('mcp:localStatus', folders),
   syncCodex: (p)           => ipcRenderer.invoke('mcp:syncCodex', p),
-
-  // supervisor dos servidores vsp em HTTP
-  serverStart: (p)         => ipcRenderer.invoke('server:start', p),
-  serverStop: (p)          => ipcRenderer.invoke('server:stop', p),
-  serverStatus: ()         => ipcRenderer.invoke('server:status'),
-  serverStartEnabled: (p)  => ipcRenderer.invoke('server:startEnabled', p),
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),

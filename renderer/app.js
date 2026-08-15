@@ -13,9 +13,6 @@ const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nest
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
 const localFolders = new Set();   // pastas que ja tem .mcp.json
-// id -> { port, url }. Servidores vsp em HTTP que o Cockpit mantem vivos:
-// e o que permite uma conversa ja aberta reconectar depois de um login novo.
-const serversUp = new Map();
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -501,8 +498,6 @@ function renderDetail() {
   mcpBox.append(mBtn, mMenu);
   actions.appendChild(mcpBox);
 
-  mk(serversUp.has(id) ? t('server.stop') : t('server.start'),
-     serversUp.has(id) ? '' : 'btn-ghost', () => toggleServer(e));
   mk(t('card.remove'), 'btn-ghost', () => removeEnv(idx));
 
   head.append(titleBox, actions);
@@ -523,8 +518,6 @@ function renderDetail() {
     [lbl('f.lang'), e.language || '—'],
     // a pasta decide onde vao a config e o cookie: merece estar visivel aqui
     [lbl('f.folder'), folderOf(e.client_name) || t('detail.noFolder')],
-    // estado do servidor HTTP que o Cockpit mantem vivo
-    [t('detail.server'), serversUp.has(id) ? t('server.up', serversUp.get(id).port) : t('server.down')],
     // so Cloud tem cookie; a janela e de 24h, entao o prazo importa
     ...(e.auth_type === 'cloud' ? [[t('detail.cookie'), cookieHint(cookieOf(id))]] : []),
     [lbl('detail.flags'), [
@@ -922,47 +915,12 @@ async function refreshMcpStatus() {
     for (const [dir, tem] of Object.entries((res && res.folders) || {})) if (tem) localFolders.add(dir);
   } catch (e) { /* idem */ }
 
-  try {
-    const res = await window.api.serverStatus();
-    serversUp.clear();
-    for (const [id, s] of Object.entries((res && res.running) || {})) serversUp.set(id, s);
-  } catch (e) { /* idem */ }
-
   // conta so as conexoes DAQUI — o ~/.claude.json pode ter servers de terceiros
   const meus = (clients.environments || []).filter(e =>
     globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name))).length;
   const badge = $('global-count');
   if (badge) badge.textContent = meus;
   render();
-}
-
-// Conexoes com MCP habilitado (global ou local). Sao as que precisam de
-// servidor no ar.
-function enabledEnvs() {
-  return (clients.environments || []).filter(e =>
-    globalProfiles.has(profileId(e)) || localFolders.has(folderOf(e.client_name)));
-}
-
-// Sobe os servidores das habilitadas. Sem isso as URLs gravadas na config
-// apontariam pra portas mortas depois de reabrir o Cockpit.
-async function startEnabledServers() {
-  const envs = enabledEnvs().map(withFolder).filter(e => e.folder);
-  if (!envs.length) return;
-  try {
-    const res = await window.api.serverStartEnabled({ settings, envs });
-    const n = ((res && res.started) || []).length;
-    if (n) setStatus(t('server.startedMany', n), 'ok');
-  } catch (e) { /* segue sem servidor */ }
-  await refreshMcpStatus();
-}
-
-async function toggleServer(env) {
-  const id = profileId(env);
-  const res = serversUp.has(id)
-    ? await window.api.serverStop({ env: withFolder(env) })
-    : await window.api.serverStart({ settings, env: withFolder(env) });
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
-  await refreshMcpStatus();
 }
 
 async function doTest(env, btn) {
@@ -988,8 +946,6 @@ async function doLogin(env, btn) {
 
   const id = profileId(env);
   if (res.ok) cookieState.set(id, { state: 'valid', expiresAt: null }); else cookieState.delete(id);
-  // reiniciou o servidor HTTP? entao conversa aberta reconecta sozinha
-  if (res.serverRestarted) setStatus('✓ ' + t('server.restarted'), 'ok');
   if (btn) {
     btn.disabled = false;
     btn.classList.toggle('btn-ok', res.ok);
@@ -1157,7 +1113,6 @@ async function init() {
   render();
   await refreshCookieStatus();
   await refreshMcpStatus();
-  await startEnabledServers();
   await initUpdates();
   setStatus(t('status.ready'));
 }
