@@ -893,6 +893,8 @@ async function toggleMcp(env, escopo, jaAtivo) {
     }
   }
   if (!res) return; // usuario cancelou a confirmacao
+  // aprovacao gravada? senao o Claude Code vai perguntar e o server nao sobe sozinho
+  if (res.ok && res.approved === false) { setStatus(t('be.localNotApproved'), 'warn'); await refreshMcpStatus(); return; }
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
   await refreshMcpStatus();
 }

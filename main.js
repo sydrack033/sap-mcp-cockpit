@@ -431,6 +431,45 @@ function writeClaudeGlobal(json, raw) {
   fs.renameSync(tmp, CLAUDE_GLOBAL); // nunca deixa o arquivo pela metade
 }
 
+// ---------------------------------------------------------------------------
+// Aprovacao dos servers de PROJETO (.mcp.json)
+//
+// O Claude Code nao carrega um server vindo de .mcp.json enquanto ele nao for
+// aprovado — e o silencio nao explica nada: as tools simplesmente nao existem.
+// A aprovacao mora em ~/.claude.json -> projects[<pasta>].enabledMcpjsonServers.
+// Sem gravar isso, escrever o .mcp.json nao bastava.
+//
+// A chave da pasta aparece nos DOIS formatos no arquivo real (c:/Users/... e
+// C:\Users\...), dependendo de quem gravou — aqui tem 19 de um e 14 do outro,
+// com pastas repetidas nas duas formas. Gravamos nas duas pra nao depender de
+// adivinhar qual o host vai consultar.
+// ---------------------------------------------------------------------------
+function projectKeys(dir) {
+  const nativo = path.resolve(dir);          // C:\Users\...
+  const barra = nativo.replace(/\\/g, '/');  // C:\Users\... -> C:/Users/...
+  return [...new Set([nativo, barra])];
+}
+
+function setProjectApproval(dir, ids, aprovar) {
+  const r = readClaudeGlobal();
+  if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
+
+  const json = r.json;
+  if (!json.projects || typeof json.projects !== 'object') json.projects = {};
+  for (const k of projectKeys(dir)) {
+    const p = json.projects[k] || (json.projects[k] = {});
+    const atual = Array.isArray(p.enabledMcpjsonServers) ? p.enabledMcpjsonServers : [];
+    p.enabledMcpjsonServers = aprovar
+      ? [...new Set([...atual, ...ids])]
+      : atual.filter(x => !ids.includes(x));
+    if (!Array.isArray(p.disabledMcpjsonServers)) p.disabledMcpjsonServers = [];
+    // hasTrustDialogAccepted NAO e mexido de proposito: e o "confia nesta
+    // pasta?", uma decisao de seguranca que cabe ao usuario responder.
+  }
+  writeClaudeGlobal(json, r.raw);
+  return { ok: true };
+}
+
 // Quais profiles ja estao no escopo global. Usado pelo indicador e pelo filtro.
 ipcMain.handle('configs:globalStatus', () => {
   const r = readClaudeGlobal();
@@ -663,13 +702,18 @@ ipcMain.handle('mcp:enableLocal', (_evt, payload) => {
     const res = generateWorkspace(settings, folder, lista);
     if (!res.ok) return res;
 
+    // Sem isso o Claude Code ignora o .mcp.json recem-escrito: server de
+    // projeto so carrega depois de aprovado.
+    const aprov = setProjectApproval(folder, lista.map(envIdOf), true);
+
     const vsp = killVspProcesses(settings);
     return {
       ok: true,
       key: 'be.localEnabled',
       args: [folder, lista.length],
       vspKilled: vsp.killed,
-      files: res.files
+      files: res.files,
+      approved: aprov.ok
     };
   } catch (e) {
     return { ok: false, key: 'be.genError', args: [e.message] };
@@ -685,7 +729,13 @@ ipcMain.handle('mcp:disableLocal', (_evt, payload) => {
     if (!folder) return { ok: false, key: 'be.noFolderForConn' };
     const alvo = path.join(folder, '.mcp.json');
     if (!fs.existsSync(alvo)) return { ok: false, key: 'be.localNotThere', args: [folder] };
+
+    // le os ids ANTES de apagar, pra tirar a aprovacao dos mesmos servers
+    let ids = [];
+    try { ids = Object.keys(JSON.parse(fs.readFileSync(alvo, 'utf8')).mcpServers || {}); } catch (e) {}
     fs.unlinkSync(alvo);
+    if (ids.length) setProjectApproval(folder, ids, false);
+
     const vsp = killVspProcesses(settings);
     return { ok: true, key: 'be.localDisabled', args: [folder], vspKilled: vsp.killed };
   } catch (e) {
