@@ -89,13 +89,42 @@ function cookieFileFor(projectPath, env) {
 }
 
 // Cookie "valido" = arquivo existe e nao esta vazio.
-function cookieExists(projectPath, env) {
+// Estado do cookie de um ambiente Cloud.
+//
+// O vsp grava no formato Netscape cookie jar (o mesmo do curl), com uma coluna
+// de expiracao em epoch:
+//   dominio  flag  path  secure  EXPIRACAO  nome  valor
+// Nos tenants S4HC a janela e de 24h a partir do login. Expiracao 0 significa
+// cookie de sessao (sem prazo) — nesse caso nao da pra dizer que venceu.
+//
+// Sem isso o app so olhava "arquivo existe e nao esta vazio", e marcava como
+// logado um cookie de dias atras que ja nao autentica nada.
+function cookieStatusOf(projectPath, env) {
+  const vazio = { state: 'none', expiresAt: null };
   try {
     const f = cookieFileFor(projectPath, env);
-    return fs.existsSync(f) && fs.statSync(f).size > 0;
+    if (!fs.existsSync(f) || fs.statSync(f).size <= 0) return vazio;
+
+    const prazos = fs.readFileSync(f, 'utf8')
+      .split(/\r?\n/)
+      .filter(l => l && !l.startsWith('#'))
+      .map(l => l.split('\t'))
+      .filter(c => c.length >= 7)
+      .map(c => Number(c[4]) || 0)
+      .filter(x => x > 0);
+
+    if (!prazos.length) return { state: 'valid', expiresAt: null }; // so cookie de sessao
+    // vale ate o PRIMEIRO vencer: dai em diante a autenticacao ja pode falhar
+    const expiresAt = Math.min(...prazos);
+    return { state: expiresAt * 1000 > Date.now() ? 'valid' : 'expired', expiresAt };
   } catch (e) {
-    return false;
+    return vazio;
   }
+}
+
+// Mantido pros pontos que so querem saber se da pra tentar conectar.
+function cookieExists(projectPath, env) {
+  return cookieStatusOf(projectPath, env).state === 'valid';
 }
 
 // A pasta de uma conexao. O renderer manda ela junto no payload (campo
@@ -950,17 +979,40 @@ ipcMain.handle('vsp:login', (_evt, payload) => {
   });
 });
 
-// Status dos cookies: quais ambientes Cloud ja tem cookie salvo na pasta do projeto.
-// Usado ao abrir o app pra deixar verde quem ja esta logado.
+// Apaga o cookie vencido. Ele nao autentica mais nada, e a presenca dele so
+// engana: era o arquivo velho que fazia a UI mostrar "Logado".
+function purgeCookie(projectPath, env) {
+  try {
+    fs.unlinkSync(cookieFileFor(projectPath, env));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Status do cookie de cada ambiente Cloud: 'none' | 'valid' | 'expired', com o
+// prazo quando existe. E o que decide o verde do "Logado" na UI.
+// Vencidos sao apagados aqui — a varredura roda ao abrir o app e depois de cada
+// acao, entao e o ponto natural pra limpeza.
 ipcMain.handle('cookies:status', (_evt, payload) => {
   const { envs } = payload || {};
-  const result = {};
+  const statuses = {};
+  const purged = [];
   for (const e of (envs || [])) {
     if (e.auth_type !== 'cloud') continue;
+    const id = envIdOf(e);
     const dir = folderOfEnv(e);
-    result[envIdOf(e)] = dir ? cookieExists(dir, e) : false;
+    if (!dir) { statuses[id] = { state: 'none', expiresAt: null }; continue; }
+
+    const ck = cookieStatusOf(dir, e);
+    if (ck.state === 'expired' && purgeCookie(dir, e)) {
+      purged.push(id);
+      // segue reportando 'expired' nesta passada, pra UI poder avisar que a
+      // sessao caiu; na proxima varredura ja vira 'none'
+    }
+    statuses[id] = ck;
   }
-  return result;
+  return { statuses, purged };
 });
 
 // Teste de conexao ("ping") de um ambiente - Cloud ou On-Premise.
@@ -982,9 +1034,19 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
     fs.mkdirSync(projectPath, { recursive: true });
 
     // Pre-checagens de credencial pra dar mensagem clara.
-    if (env.auth_type === 'cloud' && !cookieExists(projectPath, env)) {
-      resolve({ ok: false, key: 'be.testNoCookie', args: [id] });
-      return;
+    if (env.auth_type === 'cloud') {
+      const ck = cookieStatusOf(projectPath, env);
+      // separa "nunca logou" de "logou mas venceu": a acao e a mesma, mas o
+      // segundo caso confunde bem mais sem a mensagem certa
+      if (ck.state === 'expired') {
+        purgeCookie(projectPath, env); // nao serve mais: sai da frente
+        resolve({ ok: false, key: 'be.testCookieExpired', args: [id] });
+        return;
+      }
+      if (ck.state !== 'valid') {
+        resolve({ ok: false, key: 'be.testNoCookie', args: [id] });
+        return;
+      }
     }
     if (env.auth_type === 'onprem' && !env.password) {
       resolve({ ok: false, key: 'be.testNoPassword', args: [id] });

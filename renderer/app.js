@@ -6,7 +6,8 @@
 let settings = {};
 let clients = { environments: [], groups: [] };
 let editIndex = -1; // -1 = novo
-const loggedIn = new Set();     // profile ids com login SSO OK nesta sessao
+// profile id -> { state: 'none'|'valid'|'expired', expiresAt }. So Cloud.
+const cookieState = new Map();
 let selectedId = null;          // profile id da conexao aberta no detalhe
 const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
@@ -176,6 +177,27 @@ function findByIdx() {
 }
 
 // ---------------------------------------------------------------------------
+// Cookie de SSO
+// A janela e curta (24h nos tenants S4HC), entao "tem arquivo" nao quer dizer
+// "esta logado" — o estado vem do prazo lido do proprio arquivo.
+// ---------------------------------------------------------------------------
+function cookieOf(id) {
+  return cookieState.get(id) || { state: 'none', expiresAt: null };
+}
+
+// Texto humano do prazo: "expira em 5h", "expirou ha 3 dias".
+function cookieHint(ck) {
+  if (!ck || ck.state === 'none') return t('cookie.none');
+  if (!ck.expiresAt) return t('cookie.valid');
+  const seg = ck.expiresAt - Math.floor(Date.now() / 1000);
+  const abs = Math.abs(seg);
+  const quanto = abs < 3600 ? t('cookie.minutes', Math.max(1, Math.round(abs / 60)))
+    : abs < 86400 ? t('cookie.hours', Math.round(abs / 3600))
+    : t('cookie.days', Math.round(abs / 86400));
+  return seg > 0 ? t('cookie.expiresIn', quanto) : t('cookie.expiredAgo', quanto);
+}
+
+// ---------------------------------------------------------------------------
 // Pasta por cliente
 // Cada cliente pode ter a sua pasta de workspace (clients.folders, mapa
 // client_name -> caminho). Sem pasta definida, cai na pasta padrao das
@@ -307,7 +329,7 @@ function renderTree() {
 
       const dot = document.createElement('span');
       dot.className = 'dot ' + (e.auth_type === 'cloud'
-        ? (loggedIn.has(id) ? 'ok' : 'cloud')
+        ? (cookieOf(id).state === 'valid' ? 'ok' : 'cloud')
         : 'onprem');
 
       const label = document.createElement('span');
@@ -398,8 +420,10 @@ function renderDetail() {
 
   if (e.auth_type === 'cloud') {
     const loginBtn = document.createElement('button');
-    loginBtn.className = 'btn btn-sm' + (loggedIn.has(id) ? ' btn-ok' : '');
-    loginBtn.textContent = loggedIn.has(id) ? t('card.loginOk') : t('card.login');
+    const ck = cookieOf(id);
+    loginBtn.className = 'btn btn-sm' + (ck.state === 'valid' ? ' btn-ok' : '');
+    loginBtn.textContent = ck.state === 'valid' ? t('card.loginOk') : t('card.login');
+    loginBtn.title = cookieHint(ck);
     loginBtn.onclick = () => doLogin(e, loginBtn);
     actions.appendChild(loginBtn);
   }
@@ -494,6 +518,8 @@ function renderDetail() {
     [lbl('f.lang'), e.language || '—'],
     // a pasta decide onde vao a config e o cookie: merece estar visivel aqui
     [lbl('f.folder'), folderOf(e.client_name) || t('detail.noFolder')],
+    // so Cloud tem cookie; a janela e de 24h, entao o prazo importa
+    ...(e.auth_type === 'cloud' ? [[t('detail.cookie'), cookieHint(cookieOf(id))]] : []),
     [lbl('detail.flags'), [
       e.read_only && t('f.readonly'),
       e.insecure && t('f.insecure'),
@@ -917,7 +943,7 @@ async function doLogin(env, btn) {
   if (res.log) lastLog = res.log;
 
   const id = profileId(env);
-  if (res.ok) loggedIn.add(id); else loggedIn.delete(id);
+  if (res.ok) cookieState.set(id, { state: 'valid', expiresAt: null }); else cookieState.delete(id);
   if (btn) {
     btn.disabled = false;
     btn.classList.toggle('btn-ok', res.ok);
@@ -1013,11 +1039,13 @@ function bind() {
 // Pergunta ao main quais ambientes Cloud ja tem cookie salvo e marca como logados.
 async function refreshCookieStatus() {
   try {
-    const status = await window.api.cookiesStatus({ settings, envs: (clients.environments||[]).map(withFolder) });
-    for (const [id, has] of Object.entries(status || {})) {
-      if (has) loggedIn.add(id); else loggedIn.delete(id);
-    }
+    const res = await window.api.cookiesStatus({ settings, envs: (clients.environments || []).map(withFolder) });
+    cookieState.clear();
+    for (const [id, ck] of Object.entries((res && res.statuses) || {})) cookieState.set(id, ck);
     render();
+    // vencidos sao apagados na varredura; avisa, senao o arquivo some calado
+    const n = ((res && res.purged) || []).length;
+    if (n) setStatus(t('cookie.purged', n), 'warn');
   } catch (e) { /* ignora */ }
 }
 

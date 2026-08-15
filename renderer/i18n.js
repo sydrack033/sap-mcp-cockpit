@@ -60,6 +60,16 @@ const I18N = {
 
     'conn.none': 'Pick a connection on the left, or create one with <b>+ Connection</b>.',
     'detail.flags': 'Flags',
+    'detail.cookie': 'SSO session',
+    'cookie.none': 'no session — run SSO Login',
+    'cookie.valid': 'active',
+    'cookie.expiresIn': 'active, expires in {0}',
+    'cookie.expiredAgo': 'expired {0} ago — run SSO Login again',
+    'cookie.minutes': '{0} min',
+    'cookie.hours': '{0}h',
+    'cookie.days': '{0} day(s)',
+    'cookie.purged': '{0} expired SSO session(s) found and removed — log in again to use them.',
+    'be.testCookieExpired': '{0}: the SSO session expired. Run SSO Login again.',
     'detail.noFolder': 'not set yet',
 
     'group.newTitle': 'New client',
@@ -247,6 +257,16 @@ const I18N = {
 
     'conn.none': 'Escolha uma conexão à esquerda, ou crie uma em <b>+ Conexão</b>.',
     'detail.flags': 'Flags',
+    'detail.cookie': 'Sessão SSO',
+    'cookie.none': 'sem sessão — faça o Login SSO',
+    'cookie.valid': 'ativa',
+    'cookie.expiresIn': 'ativa, expira em {0}',
+    'cookie.expiredAgo': 'expirou há {0} — faça o Login SSO de novo',
+    'cookie.minutes': '{0} min',
+    'cookie.hours': '{0}h',
+    'cookie.days': '{0} dia(s)',
+    'cookie.purged': '{0} sessão(ões) SSO vencida(s) encontrada(s) e removida(s) — refaça o login pra usar.',
+    'be.testCookieExpired': '{0}: a sessão SSO expirou. Faça o Login SSO de novo.',
     'detail.noFolder': 'ainda não definida',
 
     'group.newTitle': 'Novo cliente',
