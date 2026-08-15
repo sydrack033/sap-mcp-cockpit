@@ -897,12 +897,22 @@ ipcMain.handle('vsp:login', (_evt, payload) => {
       if (killTimer) clearTimeout(killTimer);
       resolve(res);
     };
-    const ok = (extra) => finish({
-      ok: true,
-      key: 'be.loginOk',
-      args: [path.basename(cookieFile)],
-      log: out, ...extra
-    });
+    const ok = (extra) => {
+      // O cookie novo ja esta no disco, mas o vsp que o host MCP subiu ainda
+      // segura o ANTIGO em memoria — relogar sem derrubar nao surte efeito
+      // nenhum. A config em si NAO fica velha: ela guarda o CAMINHO do cookie,
+      // e o arquivo e sempre o mesmo, sobrescrito a cada login.
+      // Aqui e seguro: so chega neste ponto com o cookie ja capturado e estavel.
+      const vsp = killVspProcesses(settings);
+      finish({
+        ok: true,
+        key: 'be.loginOk',
+        args: [path.basename(cookieFile)],
+        log: out,
+        vspKilled: vsp.killed,
+        ...extra
+      });
+    };
 
     proc.on('error', e => finish({ ok: false, key: 'be.error', args: [e.message], log: out }));
 
