@@ -12,6 +12,7 @@
   --text:        #e6edf3;
   --text-dim:    #8b97a6;
   --green:       #4fc97a;
+  --amber:       #e0a740;
   --red:         #f0716a;
   --radius:      10px;
 }
@@ -550,7 +551,8 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 }
 .statusbar.ok   { color: var(--green); }
 .statusbar.err  { color: var(--red); }
-.statusbar.warn { color: var(--accent-hi); }
+/* aviso nao pode usar --accent-hi: e o verde da marca, e verde le como sucesso */
+.statusbar.warn { color: var(--amber); }
 
 /* animacao basica da mensagem de status (fade + slide ao aparecer) */
 @keyframes statusFlash {

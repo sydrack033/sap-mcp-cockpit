@@ -48,7 +48,9 @@ function profileId(e) { return slug(e.client_name) + '-' + slug(e.env_name); }
 
 function setStatus(msg, kind) {
   const bar = document.querySelector('.statusbar');
-  bar.classList.remove('ok', 'err');
+  // limpa TODOS os estados: se sobrar um, a proxima mensagem herda a cor errada
+  // (era o caso do 'warn', que ficava grudado e pintava erro de verde)
+  bar.classList.remove('ok', 'err', 'warn');
   if (kind) bar.classList.add(kind);
   const el = $('status');
   el.textContent = msg;
@@ -875,6 +877,12 @@ async function refreshMcpStatus() {
 async function doTest(env, btn) {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
+
+  // conexao Public le o cookie da pasta do cliente; sem ela o teste nem comeca
+  if (env.auth_type === 'cloud' && !await ensureFolder(env.client_name)) {
+    setStatus(t('msg.folderNeeded', env.client_name), 'warn');
+    return;
+  }
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = t('card.testing'); }
   setStatus(`${t('card.testing')} ${profileId(env)}`);
@@ -887,6 +895,13 @@ async function doTest(env, btn) {
 async function doLogin(env, btn) {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
+
+  // O cookie do SSO e gravado na pasta do cliente. Sem pasta nao ha onde
+  // salvar, entao pede na hora em vez de so avisar e nao fazer nada.
+  if (!await ensureFolder(env.client_name)) {
+    setStatus(t('msg.folderNeeded', env.client_name), 'warn');
+    return;
+  }
   setStatus(t('msg.loginStart', profileId(env)));
   if (btn) { btn.disabled = true; btn.textContent = t('card.logging'); }
   const res = await window.api.vspLogin({ settings, env: withFolder(env) });
