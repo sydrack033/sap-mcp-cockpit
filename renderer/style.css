@@ -275,6 +275,10 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
 }
 .btn-primary:hover { filter: brightness(1.08); }
 .btn-ghost { background: transparent; }
+
+/* botao de mostrar/ocultar senha: marca quando a senha esta a vista */
+#f-pass-eye { min-width: 74px; }
+#f-pass-eye.on { color: var(--accent-hi); border-color: var(--accent); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
 .btn-ok {
   background: linear-gradient(180deg, #7ce6a2, var(--green));

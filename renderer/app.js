@@ -31,6 +31,9 @@ async function changeLang(lang) {
   renderUpdate(); // a pilula de update e montada em JS, o data-i18n nao a alcanca
   if (!$('modal').classList.contains('hidden')) {
     $('modal-title').textContent = (editIndex >= 0) ? t('modal.edit') : t('modal.new');
+    // o applyI18n repoe o rotulo pelo data-i18n ("Mostrar"), que fica errado se
+    // a senha estiver a vista: reescreve pelo estado real do campo
+    setPassVisible($('f-pass').type === 'text');
   }
 }
 
@@ -581,6 +584,17 @@ function currentAuthType() {
   return document.querySelector('input[name=auth]:checked').value;
 }
 
+// Mostrar/esconder a senha da conexao Private. Volta pra escondida sempre que
+// o modal abre — senao a senha de um cliente ficaria a vista ao editar o proximo.
+function setPassVisible(mostrar) {
+  const campo = $('f-pass'), btn = $('f-pass-eye');
+  if (!campo || !btn) return;
+  campo.type = mostrar ? 'text' : 'password';
+  btn.textContent = t(mostrar ? 'f.pass.hide' : 'f.pass.show');
+  btn.title = t(mostrar ? 'f.pass.hide.title' : 'f.pass.show.title');
+  btn.classList.toggle('on', mostrar);
+}
+
 // idx >= 0 edita; idx = -1 cria. `opts.prefill` alimenta o formulario sem sair
 // do modo "novo" — e o que faz duplicar, importar do SAP GUI e "+" no grupo
 // reaproveitarem este mesmo modal.
@@ -597,6 +611,7 @@ function openModal(idx, opts) {
   $('f-sapclient').value = e ? (e.sap_client || '') : '100';
   $('f-user').value      = e ? (e.user || '') : '';
   $('f-pass').value      = e ? (e.password || '') : '';
+  setPassVisible(false); // toda vez que o modal abre a senha volta escondida
   // on-prem self-signed e a regra → liga por padrao em conexao nova
   $('f-insecure').checked = e ? !!e.insecure : true;
   $('f-mode').value      = e ? (e.mode || 'focused') : 'focused';
@@ -987,6 +1002,7 @@ function bind() {
     r.onchange = () => setAuthType(currentAuthType());
   });
   $('f-client').oninput = onClientChanged;
+  $('f-pass-eye').onclick = () => setPassVisible($('f-pass').type === 'password');
 
   // log
   $('btn-log').onclick = () => showLog(lastLog);
