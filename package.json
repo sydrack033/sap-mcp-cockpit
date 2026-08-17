@@ -1,6 +1,6 @@
 {
   "name": "sap-mcp-cockpit",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "_comment_description": "NAO passe de ~250 caracteres: o electron-builder joga este texto na descricao do atalho (CreateShortCut ... ${APP_DESCRIPTION}) e o campo de comentario do .lnk trunca em 255, corrompendo o IconLocation gravado logo depois — o atalho fica sem icone. O texto longo vive no README.",
   "description": "Liga seu assistente de IA (Claude Code / Codex) ao SAP via MCP.",
   "main": "main.js",
