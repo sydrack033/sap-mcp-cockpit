@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
+const { fileURLToPath } = require('url');
+const net = require('net');
 
 // ---------------------------------------------------------------------------
 // Persistencia dos dados do app (settings + clientes) no perfil do usuario.
@@ -36,6 +38,11 @@ const DEFAULT_SETTINGS = {
   vsp_path: 'C:/Users/' + (process.env.USERNAME || 'user') + '/Projects/tools/vsp.exe',
   chrome_path: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   vscode_cmd: 'code',
+  // Conexoes RFC (via SAProuter). Os dois vazios = automatico:
+  //   python_path vazio -> usa o runtime que vem junto no app (resolvePython)
+  //   nwrfc_lib   vazio -> a sapnwrfc.dll ja esta na System32 (caso do SAP GUI)
+  python_path: '',
+  nwrfc_lib: '',
   // Claude Code nao tem comando aqui: e o app desktop, aberto por claude://
   lang: 'en' // idioma da UI: 'en' (padrao) ou 'pt'
 };
@@ -133,15 +140,189 @@ function folderOfEnv(e, fallback) {
   return (e && e.folder) || fallback || '';
 }
 
+// ---------------------------------------------------------------------------
+// Conexoes RFC: o ADT-over-RFC bridge (sistemas atras de SAProuter)
+//
+// Um SAProuter que so libera rota NI (gateway 33xx) e nega rota crua pro ICM
+// deixa o vsp -- que so fala HTTP -- sem caminho nenhum, embora o Eclipse ADT
+// conecte normalmente. O Eclipse conecta porque nao usa HTTP: ele serializa cada
+// request ADT e manda por RFC pra FM padrao SADT_REST_RFC_ENDPOINT.
+//
+// O bridge (Python + pyrfc) reproduz isso: escuta HTTP em 127.0.0.1:<porta>,
+// empacota cada request na FM e devolve a resposta. Pro vsp e um ICM comum.
+//
+//   vsp --HTTP--> bridge --RFC(+saprouter)--> SADT_REST_RFC_ENDPOINT --> ADT
+//
+// LIMITE que vale repetir (esta no CLAUDE.md gerado tambem): a FM e STATELESS
+// por chamada, entao ATIVAR objeto nao funciona pelo bridge -- lock e activate
+// caem em sessoes diferentes. Serve pra ler/buscar/analisar.
+//
+// Os scripts moram no app (pasta bridge/) mas sao COPIADOS pro userData: o
+// Python e um processo externo e nao consegue executar arquivo de dentro do
+// app.asar. O fs do Node le do asar sem problema, entao a copia funciona.
+// ---------------------------------------------------------------------------
+const BRIDGE_SRC_DIR   = path.join(__dirname, 'bridge');
+const BRIDGE_DIR       = path.join(DATA_DIR, 'bridge');
+const BRIDGE_SCRIPT    = path.join(BRIDGE_DIR, 'adt_rfc_bridge.py');
+const BRIDGE_LAUNCHER  = path.join(BRIDGE_DIR, 'bridge_launch.py');
+const BRIDGE_FILES     = ['adt_rfc_bridge.py', 'bridge_launch.py', 'NOTICE.md'];
+const BRIDGE_PORT_BASE = 8410;
+
+// Copia/atualiza os scripts do bridge no userData. Regravar so quando o
+// conteudo muda evita mexer no arquivo a cada boot (e deixa o usuario editar
+// pra debugar sem o app desfazer na hora seguinte).
+function ensureBridgeFiles() {
+  try {
+    fs.mkdirSync(BRIDGE_DIR, { recursive: true });
+    for (const f of BRIDGE_FILES) {
+      const src = path.join(BRIDGE_SRC_DIR, f);
+      if (!fs.existsSync(src)) continue;
+      const novo = fs.readFileSync(src);
+      const dst = path.join(BRIDGE_DIR, f);
+      let atual = null;
+      try { atual = fs.readFileSync(dst); } catch (e) { /* ainda nao existe */ }
+      if (!atual || !atual.equals(novo)) fs.writeFileSync(dst, novo);
+    }
+    return true;
+  } catch (e) {
+    console.error('Nao consegui preparar os scripts do bridge:', e);
+    return false;
+  }
+}
+
+// O Python que roda o bridge.
+//
+// O app JA VEM com um Python 3.12 embutivel + pyrfc (vendor/bridge-runtime no
+// dev, resources/bridge-runtime no empacotado): sao ~20 MB e evitam pedir ao
+// usuario que instale Python e rode pip. Duas coisas que valem saber:
+//   - 3.12 e o TETO: o pyrfc nao publica wheel win_amd64 para 3.13/3.14.
+//   - o SAP NW RFC SDK NAO vem junto (nao e redistribuivel). Ele ja costuma
+//     estar na System32 de quem tem SAP GUI; se nao, o usuario aponta a pasta.
+// Quem preferir o proprio Python e so preencher o caminho nas Configuracoes.
+function bundledPython() {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'bridge-runtime')
+    : path.join(__dirname, 'vendor', 'bridge-runtime');
+  const exe = path.join(base, 'python.exe');
+  try { if (fs.existsSync(exe)) return exe; } catch (e) { /* sem runtime embutido */ }
+  return '';
+}
+
+function resolvePython(settings) {
+  const manual = String((settings && settings.python_path) || '').trim();
+  if (manual) return manual;          // o usuario mandou usar o dele
+  return bundledPython() || 'python'; // embutido, ou o do PATH como ultimo recurso
+}
+
+function bridgePortOf(e) {
+  const n = parseInt((e && e.bridge_port) || '', 10);
+  return (n >= 1 && n <= 65535) ? n : BRIDGE_PORT_BASE;
+}
+
+// A URL efetiva da conexao. Numa RFC ela e SEMPRE derivada da porta do bridge --
+// o campo `url` do formulario nem existe nesse tipo.
+function urlOf(e) {
+  if (e && e.auth_type === 'rfc') return 'http://127.0.0.1:' + bridgePortOf(e);
+  return (e && e.url) || '';
+}
+
+// Variaveis que o adt_rfc_bridge.py le (ele exige as obrigatorias no import e
+// sai com codigo 2 se faltar alguma).
+function bridgeEnvFor(settings, e) {
+  const env = {
+    BRIDGE_PORT:   String(bridgePortOf(e)),
+    BRIDGE_SCRIPT: BRIDGE_SCRIPT,
+    RFC_ASHOST:    e.ashost || '',
+    RFC_SYSNR:     e.sysnr || '00',
+    RFC_CLIENT:    e.sap_client || '100',
+    RFC_USER:      e.user || '',
+    RFC_PASSWD:    e.password || ''
+  };
+  // Sem router = acesso direto; o bridge so passa o parametro quando ele existe.
+  if (e.saprouter) env.RFC_SAPROUTER = e.saprouter;
+  return env;
+}
+
+// Onde o SDK e apontado para o pyrfc.
+//
+// ARMADILHA: o PATH nao resolve. Desde o Python 3.8 o carregamento de extensao C
+// usa LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, que cobre a pasta do app, a system32 e as
+// pastas registradas por os.add_dll_directory() -- o PATH fica de fora. O proprio
+// pyrfc trata isso no __init__.py dele:
+//     os.add_dll_directory(os.path.join(os.environ["SAPNWRFC_HOME"], "lib"))
+// Ou seja, quem manda e o SAPNWRFC_HOME. Quem tem a DLL na system32 (SAPSetup
+// costuma deixar la) funciona sem nada disso; quem tem o SDK numa pasta propria
+// so funciona por aqui.
+//
+// Aceitamos tanto a RAIZ do SDK quanto a pasta lib: o usuario sabe onde esta a
+// DLL, nao a convencao de pastas da SAP.
+function sdkHomeFrom(dir) {
+  // sem regex aqui de proposito: separador em literal e facil de errar
+  let d = String(dir || '').trim();
+  while (d.endsWith('/') || d.endsWith(path.sep)) d = d.slice(0, -1);
+  if (!d) return '';
+  try {
+    if (fs.existsSync(path.join(d, 'lib', sdkLibName()))) return d;             // raiz do SDK
+    if (fs.existsSync(path.join(d, sdkLibName())))        return path.dirname(d); // pasta lib
+  } catch (e) { /* caminho invalido: cai no fallback */ }
+  return d; // deixa passar; o diagnostico dira se nao serve
+}
+
+function withSdkPath(settings, envMap) {
+  const conf = String((settings && settings.nwrfc_lib) || '').trim();
+  if (!conf) return envMap;
+  const nativo = (x) => x.replace(/\//g, path.sep);
+  const home = sdkHomeFrom(conf);
+  if (home) envMap.SAPNWRFC_HOME = nativo(home); // e ISTO que o pyrfc le
+  // PATH nao basta pro pyrfc, mas ajuda as ferramentas de linha de comando do SDK
+  envMap.PATH = nativo(conf) + path.delimiter + (process.env.PATH || '');
+  return envMap;
+}
+
+// Uma porta livre qualquer, cedida pelo SO. O teste de conexao sobe um bridge
+// proprio nela, pra nao brigar com o bridge que o host MCP pode ter deixado no
+// ar na porta oficial da conexao (que estaria com a config ANTIGA).
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const porta = srv.address().port;
+      srv.close(() => resolve(porta));
+    });
+  });
+}
+
+// Espera a porta do bridge abrir. Usado so pelo teste de conexao -- o launcher
+// tem a espera dele, em Python.
+function waitForPort(port, timeoutMs) {
+  const limite = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tenta = () => {
+      const sock = net.connect({ host: '127.0.0.1', port }, () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.on('error', () => {
+        sock.destroy();
+        if (Date.now() >= limite) resolve(false);
+        else setTimeout(tenta, 200);
+      });
+    };
+    tenta();
+  });
+}
+
 // Entrada do sistema no .vsp.json (compartilhada pela geracao e pelo teste).
 function buildSystemEntry(projectPath, e) {
-  const sys = { url: e.url, client: e.sap_client || '100' };
+  const sys = { url: urlOf(e), client: e.sap_client || '100' };
   if (e.language) sys.language = e.language;
   if (e.auth_type === 'cloud') {
     sys.cookie_file = cookieFileFor(projectPath, e).replace(/\\/g, '/');
-  } else { // onprem
+  } else { // onprem | rfc
     if (e.user) sys.user = e.user;
-    if (e.insecure) sys.insecure = true;
+    // RFC fala HTTP puro com o bridge no loopback: nao ha TLS pra relaxar
+    if (e.insecure && e.auth_type === 'onprem') sys.insecure = true;
   }
   return sys;
 }
@@ -152,15 +333,15 @@ function buildSystemEntry(projectPath, e) {
 // com "SAP URL is required" antes do handshake). Por isso passamos tudo explicito aqui,
 // deixando o server self-contained (independe de cwd / .vsp.json).
 function buildMcpArgs(settings, e, folder) {
-  const args = ['--url', e.url, '--client', e.sap_client || '100'];
+  const args = ['--url', urlOf(e), '--client', e.sap_client || '100'];
   if (e.language) args.push('--language', e.language);
   if (e.auth_type === 'cloud') {
     // caminho ABSOLUTO: o server precisa achar o cookie independente do cwd
     args.push('--cookie-file', cookieFileFor(folderOfEnv(e, folder), e).replace(/\\/g, '/'));
-  } else { // onprem
+  } else { // onprem | rfc (numa RFC a URL aponta pro bridge local)
     if (e.user)     args.push('--user', e.user);
     if (e.password) args.push('--password', e.password);
-    if (e.insecure) args.push('--insecure');
+    if (e.insecure && e.auth_type === 'onprem') args.push('--insecure');
   }
   args.push('--mode', e.mode || 'focused');
   if (e.read_only)                 args.push('--read-only');
@@ -176,6 +357,20 @@ function tomlStr(s) {
 
 // Comando + args + env de um server MCP.
 function buildServerLaunch(settings, e, folder) {
+  // RFC: quem o host MCP sobe e o Python (launcher), nao o vsp. O launcher
+  // garante o bridge no ar e so entao entrega o stdio pro vsp, repassando estes
+  // mesmos args -- por isso o resto da config (modo, read-only, transports)
+  // continua valendo igual as outras conexoes.
+  if (e.auth_type === 'rfc') {
+    const envMap = withSdkPath(settings, Object.assign(bridgeEnvFor(settings, e), {
+      ADT_CLIENT: settings.vsp_path
+    }));
+    return {
+      command: resolvePython(settings),
+      args: [BRIDGE_LAUNCHER].concat(buildMcpArgs(settings, e, folder)),
+      env: envMap
+    };
+  }
   return { command: settings.vsp_path, args: buildMcpArgs(settings, e, folder), env: {} };
 }
 
@@ -220,6 +415,22 @@ function buildInstructionsMd(envs) {
   L.push('  conexao quebrada.');
   L.push('- Cloud com erro de autenticacao = cookie SSO expirou; refaca o **Login SSO** no');
   L.push('  SAP MCP Cockpit.');
+  L.push('');
+  L.push('## Conexoes RFC (Tipo `rfc`) — LIMITE que muda o que da pra pedir');
+  L.push('Nesses ambientes o vsp **nao** fala HTTP com o SAP: ele fala com um bridge local em');
+  L.push('`127.0.0.1:<porta>` que tunela cada request ADT pela FM `SADT_REST_RFC_ENDPOINT` por');
+  L.push('RFC, atravessando o SAProuter (mesmo caminho do Eclipse ADT). Isso e transparente pro');
+  L.push('vsp em tudo, MENOS num ponto que muda o seu plano:');
+  L.push('- A FM e **stateless por chamada** — nao existe sessao HTTP. Logo **ATIVAR objeto NAO');
+  L.push('  FUNCIONA**: o `LockObject` e o `Activate` caem em sessoes diferentes (da `403 User is');
+  L.push('  currently editing`; e se destravar antes, o activate vira **200 no-op silencioso**).');
+  L.push('- Em NetWeaver 75x o lock volta `MODIFICATION_SUPPORT=NoModification` e o vsp **aborta');
+  L.push('  antes de gravar**. Nao fique retentando: nao ha flag que contorne pelo MCP.');
+  L.push('- Portanto, aqui conte com **ler, buscar e analisar**. Precisa gravar/ativar? Diga ao');
+  L.push('  usuario pra usar Eclipse ADT (ou um caminho HTTP(S) real ate o ICM) — nao tente por aqui.');
+  L.push('- Erro `502 ADT-RFC bridge error` ou conexao recusada = problema do bridge/RFC (SDK,');
+  L.push('  pyrfc, credencial, router), **nao** do seu fluxo. Reporte ao usuario para ele rodar o');
+  L.push('  **Diagnostico do bridge** no SAP MCP Cockpit.');
   L.push('');
   L.push('## Erros comuns (decodificador) — nao gaste tempo redescobrindo');
   L.push('- `tls: certificate has expired or is not yet valid` → cert self-signed/expirado (on-prem).');
@@ -316,7 +527,7 @@ function buildCodexBlock(settings, envs) {
     lines.push(`command = ${tomlStr(launch.command)}`);
     lines.push(`args = [${launch.args.map(tomlStr).join(', ')}]`);
     const envMap = Object.assign({}, launch.env);
-    if (e.auth_type === 'onprem' && e.password) {
+    if (e.auth_type !== 'cloud' && e.password) {
       for (const v of passwordVarsOf(id)) envMap[v] = e.password;
     }
     if (Object.keys(envMap).length) {
@@ -383,6 +594,45 @@ function killVspProcesses(settings) {
 }
 
 // ---------------------------------------------------------------------------
+// Encerra os bridges ADT-over-RFC que ficaram vivos.
+//
+// Sem isto a config nova nao vale nada nas conexoes RFC: o launcher so sobe um
+// bridge quando a porta esta LIVRE. Um bridge antigo continua escutando a mesma
+// porta com o ashost/usuario/senha ANTIGOS, e o vsp novo se conecta nele achando
+// que esta falando com o sistema recem-configurado.
+//
+// Nao da pra usar taskkill /IM python.exe: derrubaria todo Python da maquina. O
+// filtro e pela linha de comando conter adt_rfc_bridge.py, entao so morre o que
+// e nosso.
+// ---------------------------------------------------------------------------
+function killBridgeProcesses() {
+  try {
+    if (process.platform === 'win32') {
+      // Dois cuidados que parecem detalhe e nao sao:
+      //   - restringir a processos 'py*' (python.exe/pythonw.exe/py.exe), senao o
+      //     PROPRIO powershell entra no resultado: a string do filtro esta na
+      //     linha de comando dele e ele mataria a si mesmo antes de matar o bridge;
+      //   - @(...) pra contar, porque .Count num CimInstance solto volta vazio.
+      const ps = [
+        '$me = $PID',
+        "$p = @(Get-CimInstance Win32_Process -Filter \"Name LIKE 'py%'\" | " +
+          "Where-Object { $_.CommandLine -like '*adt_rfc_bridge.py*' -and $_.ProcessId -ne $me })",
+        '$p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+        '$p.Count'
+      ].join('; ');
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 15000 });
+      const n = parseInt(String(r.stdout || '').trim(), 10);
+      return { killed: Number.isFinite(n) ? n : 0 };
+    }
+    const r = spawnSync('pkill', ['-f', 'adt_rfc_bridge.py'], { timeout: 10000 });
+    return { killed: r.status === 0 ? null : 0 };
+  } catch (e) {
+    console.error('Falha ao encerrar o bridge RFC:', e);
+    return { killed: 0, error: e.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Registrar UMA conexao no escopo GLOBAL (user) do Claude Code: ~/.claude.json,
 // chave mcpServers do topo. Vale em qualquer pasta.
 //
@@ -410,7 +660,7 @@ function buildMcpServerEntry(settings, e, folder) {
   const launch = buildServerLaunch(settings, e, folder);
   const entry = { type: 'stdio', command: launch.command, args: launch.args };
   const envMap = Object.assign({}, launch.env);
-  if (e.auth_type === 'onprem' && e.password) {
+  if (e.auth_type !== 'cloud' && e.password) {
     for (const v of passwordVarsOf(envIdOf(e))) envMap[v] = e.password;
   }
   if (Object.keys(envMap).length) entry.env = envMap;
@@ -540,6 +790,8 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     // atualizar um profile que ja era global nao teria efeito nenhum. Depois
     // da escrita, pra nao respawnar no meio.
     const vsp = killVspProcesses(settings);
+    // bridge antigo segurando a porta faria o launcher reaproveitar a config velha
+    const bridge = killBridgeProcesses();
 
     return {
       ok: true,
@@ -547,7 +799,8 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
       args: [id, CLAUDE_GLOBAL],
       profile: id,
       files,
-      vspKilled: vsp.killed
+      vspKilled: vsp.killed,
+      bridgeKilled: bridge.killed
     };
   } catch (e) {
     return { ok: false, key: 'be.globalFail', args: [e.message] };
@@ -573,7 +826,11 @@ ipcMain.handle('configs:removeGlobal', (_evt, payload) => {
     writeClaudeGlobal(json, r.raw);
 
     const vsp = killVspProcesses(settings || {});
-    return { ok: true, key: 'be.globalRemoved', args: [id, CLAUDE_GLOBAL], profile: id, vspKilled: vsp.killed };
+    const bridge = killBridgeProcesses();
+    return {
+      ok: true, key: 'be.globalRemoved', args: [id, CLAUDE_GLOBAL], profile: id,
+      vspKilled: vsp.killed, bridgeKilled: bridge.killed
+    };
   } catch (e) {
     return { ok: false, key: 'be.globalFail', args: [e.message] };
   }
@@ -621,39 +878,101 @@ function deriveHttpUrl(server) {
   return { host, diagPort: port, instance, url: instance ? `http://${host}:80${instance}` : '' };
 }
 
-function parseLandscape(xml) {
+// Um landscape pode estar dividido em varios arquivos: o do usuario referencia
+// outros por <Include url="file:///..."/>. Numa maquina corporativa e comum
+// TODAS as conexoes morarem no arquivo global incluido -- ignorar o Include
+// fazia o import aparecer vazio justamente onde ele mais importa.
+//
+// So seguimos file:// (ou caminho relativo). Um Include http(s) apontaria pra um
+// servidor que o Cockpit nao tem por que buscar.
+function includedFiles(xml, base) {
+  const out = [];
+  for (const m of xml.matchAll(/<Include\b[^>]*\/>/g)) {
+    const url = xmlAttrs(m[0]).url || '';
+    if (!url) continue;
+    if (/^file:/i.test(url)) {
+      try { out.push(fileURLToPath(url)); } catch (e) { /* url malformada: pula */ }
+    } else if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) {
+      out.push(path.resolve(path.dirname(base), url)); // caminho relativo
+    }
+  }
+  return out;
+}
+
+// Junta o arquivo raiz com tudo que ele inclui. Dedup por caminho real (um
+// include pode apontar de volta pro arquivo de origem) e teto de 16 arquivos,
+// pra uma cadeia circular nao virar loop infinito.
+function collectLandscapeDocs(raiz) {
+  const docs = [];
+  const vistos = new Set();
+  const fila = [raiz];
+  while (fila.length && docs.length < 16) {
+    const f = fila.shift();
+    let chave;
+    try { chave = fs.realpathSync(f).toLowerCase(); } catch (e) { chave = String(f).toLowerCase(); }
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    let xml;
+    try { xml = fs.readFileSync(f, 'utf8'); } catch (e) { continue; } // include quebrado nao derruba o import
+    docs.push({ file: f, xml });
+    for (const inc of includedFiles(xml, f)) fila.push(inc);
+  }
+  return docs;
+}
+
+// Aceita a lista de documentos de collectLandscapeDocs (ou um XML solto, pros
+// testes). Devolve as pastas do SAP GUI com as conexoes de cada uma.
+function parseLandscape(docs) {
+  const lista = Array.isArray(docs) ? docs : [{ file: '', xml: String(docs || '') }];
+
+  // Os <Router> de um arquivo podem ser referenciados pelos <Service> de outro,
+  // entao TODOS os routers sao colhidos antes de resolver qualquer servico.
   const routers = {};
-  for (const m of xml.matchAll(/<Router\b[^>]*\/>/g)) {
-    const a = xmlAttrs(m[0]);
-    if (a.uuid) routers[a.uuid] = a.router || a.name || '';
+  for (const d of lista) {
+    for (const m of d.xml.matchAll(/<Router\b[^>]*\/>/g)) {
+      const a = xmlAttrs(m[0]);
+      if (a.uuid) routers[a.uuid] = a.router || a.name || '';
+    }
   }
 
   const services = {};
-  for (const m of xml.matchAll(/<Service\b[^>]*\/>/g)) {
-    const a = xmlAttrs(m[0]);
-    if (!a.uuid) continue;
-    services[a.uuid] = Object.assign({
-      uuid: a.uuid,
-      type: a.type || '',
-      name: a.name || a.systemid || '',
-      systemid: a.systemid || '',
-      server: a.server || '',
-      router: a.routerid ? (routers[a.routerid] || '') : ''
-    }, deriveHttpUrl(a.server));
+  for (const d of lista) {
+    for (const m of d.xml.matchAll(/<Service\b[^>]*\/>/g)) {
+      const a = xmlAttrs(m[0]);
+      if (!a.uuid) continue;
+      services[a.uuid] = Object.assign({
+        uuid: a.uuid,
+        type: a.type || '',
+        name: a.name || a.systemid || '',
+        systemid: a.systemid || '',
+        server: a.server || '',
+        router: a.routerid ? (routers[a.routerid] || '') : ''
+      }, deriveHttpUrl(a.server));
+    }
   }
 
   // Node nao aninha neste formato (cada um fecha antes do proximo abrir), entao
   // o match nao-guloso e seguro.
   const groups = [];
   const used = new Set();
-  for (const m of xml.matchAll(/<Node\b([^>]*)>([\s\S]*?)<\/Node>/g)) {
-    const a = xmlAttrs('<Node ' + m[1] + '>');
-    const items = [];
-    for (const it of m[2].matchAll(/<Item\b[^>]*\/>/g)) {
-      const svc = services[xmlAttrs(it[0]).serviceid];
-      if (svc) { items.push(svc); used.add(svc.uuid); }
+  const porNome = new Map();
+  for (const d of lista) {
+    for (const m of d.xml.matchAll(/<Node\b([^>]*)>([\s\S]*?)<\/Node>/g)) {
+      const a = xmlAttrs('<Node ' + m[1] + '>');
+      const items = [];
+      for (const it of m[2].matchAll(/<Item\b[^>]*\/>/g)) {
+        const svc = services[xmlAttrs(it[0]).serviceid];
+        if (svc) { items.push(svc); used.add(svc.uuid); }
+      }
+      if (!items.length) continue;
+      const nome = a.name || '';
+      // a mesma pasta pode existir nos dois arquivos: junta em uma so
+      const ja = porNome.get(nome);
+      if (ja) { ja.services.push.apply(ja.services, items); continue; }
+      const g = { name: nome, services: items };
+      porNome.set(nome, g);
+      groups.push(g);
     }
-    if (items.length) groups.push({ name: a.name || '', services: items });
   }
   // conexoes soltas, fora de qualquer pasta
   const loose = Object.values(services).filter(s => !used.has(s.uuid));
@@ -667,10 +986,12 @@ ipcMain.handle('sap:landscape', () => {
     if (!fs.existsSync(SAP_LANDSCAPE)) {
       return { ok: false, key: 'be.landscapeMissing', args: [SAP_LANDSCAPE] };
     }
-    const groups = parseLandscape(fs.readFileSync(SAP_LANDSCAPE, 'utf8'));
+    const docs = collectLandscapeDocs(SAP_LANDSCAPE);
+    const groups = parseLandscape(docs);
     const count = groups.reduce((n, g) => n + g.services.length, 0);
     if (!count) return { ok: false, key: 'be.landscapeEmpty', args: [SAP_LANDSCAPE] };
-    return { ok: true, file: SAP_LANDSCAPE, groups, count };
+    // `files` conta quantos arquivos entraram (raiz + includes), pra UI poder dizer
+    return { ok: true, file: SAP_LANDSCAPE, files: docs.map(d => d.file), groups, count };
   } catch (e) {
     return { ok: false, key: 'be.landscapeError', args: [e.message] };
   }
@@ -707,13 +1028,13 @@ function generateWorkspace(settings, folder, envs) {
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
-    '# Senhas das conexoes Private (basic auth).',
+    '# Senhas das conexoes Private e SAProuter (RFC) - basic auth.',
     '# Gerado pelo SAP MCP Cockpit. NAO versionar (esta no .gitignore).',
     '# Padrao lido pelo vsp: VSP_<SYSTEM>_PASSWORD',
     ''
   ];
   for (const e of envs) {
-    if (e.auth_type === 'onprem' && e.password) {
+    if (e.auth_type !== 'cloud' && e.password) {
       for (const v of passwordVarsOf(envIdOf(e))) envLines.push(`${v}=${e.password}`);
     }
   }
@@ -852,6 +1173,7 @@ ipcMain.handle('update:install', () => {
 });
 
 app.whenReady().then(() => {
+  ensureBridgeFiles(); // scripts do bridge RFC no userData (Python nao le de dentro do asar)
   createWindow();
   initAutoUpdate();
   app.on('activate', () => {
@@ -1045,58 +1367,145 @@ ipcMain.handle('cookies:status', (_evt, payload) => {
   return { statuses, purged };
 });
 
-// Teste de conexao ("ping") de um ambiente - Cloud ou On-Premise.
+// ---------------------------------------------------------------------------
+// Diagnostico do bridge RFC.
+//
+// A cadeia tem varias pecas que precisam CASAR em arquitetura (SDK x64 <-> Python
+// x64 <-> pyrfc x64) e o sintoma de qualquer descasamento e o mesmo traceback
+// ilegivel de "DLL load failed". Este handler quebra a cadeia em checagens
+// separadas pra o usuario ver exatamente qual elo faltou.
+// ---------------------------------------------------------------------------
+function sdkLibName() {
+  if (process.platform === 'win32')  return 'sapnwrfc.dll';
+  if (process.platform === 'darwin') return 'libsapnwrfc.dylib';
+  return 'libsapnwrfc.so';
+}
+
+// Onde o SDK costuma estar. O SAP GUI ja traz a DLL, entao na maioria das
+// maquinas Windows nao ha nada a instalar - so achar.
+function sdkCandidateDirs(settings) {
+  const dirs = [];
+  const add = (d) => { if (d && !dirs.includes(d)) dirs.push(d); };
+  const conf = String((settings && settings.nwrfc_lib) || '').trim();
+  add(conf);
+  if (conf) add(path.join(conf, 'lib')); // o usuario pode ter apontado a RAIZ do SDK
+  if (process.env.SAPNWRFC_HOME) add(path.join(process.env.SAPNWRFC_HOME, 'lib'));
+  for (const d of String(process.env.PATH || '').split(path.delimiter)) add(d.trim());
+  if (process.platform === 'win32') {
+    for (const raiz of ['C:/Program Files (x86)/SAP/FrontEnd/SAPgui',
+                        'C:/Program Files/SAP/FrontEnd/SAPgui',
+                        'C:/Program Files (x86)/SAP/FrontEnd/SAPBI',
+                        'C:/nwrfcsdk/lib', 'C:/SAP/nwrfcsdk/lib']) add(raiz);
+  }
+  return dirs.filter(Boolean);
+}
+
+// Arquitetura de um binario Windows, lida do cabecalho PE.
+// Importa porque achar a DLL nao basta: a variante 32 bits do SAP GUI deixa uma
+// sapnwrfc.dll x86 na SysWOW64, e ela NUNCA vai carregar no Python x64. Sem esta
+// checagem o diagnostico mostraria "SDK OK" e so o pyrfc ficaria vermelho, sem
+// dizer o porque.
+function peMachine(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const cab = Buffer.alloc(4);
+    fs.readSync(fd, cab, 0, 4, 0x3C);       // e_lfanew: offset do cabecalho PE
+    const m = Buffer.alloc(2);
+    fs.readSync(fd, m, 0, 2, cab.readUInt32LE(0) + 4); // PE   + Machine
+    return ({ 0x8664: 'x64', 0x14c: 'x86', 0xAA64: 'arm64' })[m.readUInt16LE(0)] || '?';
+  } catch (e) {
+    return '';
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) { /* ja fechado */ } }
+  }
+}
+
+// Procura a DLL do SDK preferindo a x64. Uma x86 encontrada nao vira sucesso,
+// mas e guardada: dizer "achei, mas e 32 bits" vale muito mais que "nao achei".
+function findSdkLib(settings) {
+  const alvo = sdkLibName();
+  const checaArch = process.platform === 'win32';
+  let consolo = null;
+  for (const d of sdkCandidateDirs(settings)) {
+    try {
+      const f = path.join(d, alvo);
+      if (!fs.existsSync(f)) continue;
+      const arch = checaArch ? peMachine(f) : 'x64';
+      if (arch === 'x64') return { file: f, arch };
+      if (!consolo) consolo = { file: f, arch };
+    } catch (e) { /* caminho invalido no PATH: ignora */ }
+  }
+  return consolo;
+}
+
+ipcMain.handle('bridge:diagnose', (_evt, payload) => {
+  const settings = (payload && payload.settings) || {};
+  const python = resolvePython(settings);
+  const embutido = bundledPython();
+  const checks = [];
+  // hintKey opcional: quando a MESMA checagem falha por motivos diferentes, a
+  // dica generica nao ajuda (achar a DLL na arquitetura errada != nao achar).
+  const push = (id, ok, detail, hintKey) => {
+    const c = { id, ok, detail: String(detail || '') };
+    if (hintKey) c.hintKey = hintKey;
+    checks.push(c);
+  };
+
+  // 1. scripts do bridge no userData
+  const scriptsOk = ensureBridgeFiles() && fs.existsSync(BRIDGE_SCRIPT) && fs.existsSync(BRIDGE_LAUNCHER);
+  push('scripts', scriptsOk, BRIDGE_DIR);
+
+  // 2. Python: existe e e 64 bits? (o SDK e x86-64 only - Python x86 nem carrega)
+  let pyOk = false;
+  let r = spawnSync(python, ['-c', 'import sys,struct;print(sys.version.split()[0]);print(struct.calcsize("P")*8)'],
+                    { timeout: 20000, encoding: 'utf8' });
+  if (r.error || r.status !== 0) {
+    push('python', false, r.error ? String(r.error.message || r.error) : String(r.stderr || '').trim());
+  } else {
+    const [versao, bits] = String(r.stdout || '').trim().split(/\r?\n/);
+    pyOk = bits === '64';
+    // saber se e o embutido ou um do usuario muda o que fazer quando algo falha
+    const origem = python === embutido ? ' [do app]' : ' [seu]';
+    push('python', pyOk, `${python}${origem} — ${versao} (${bits} bits)`);
+  }
+
+  // 3. SDK do NW RFC (tem que ser x64)
+  const lib = findSdkLib(settings);
+  if (lib && lib.arch === 'x64') push('sdk', true, lib.file);
+  else if (lib)                   push('sdk', false, `${lib.file} (${lib.arch})`, 'diag.sdk.hintX86');
+  else                            push('sdk', false, sdkLibName());
+
+  // 4. pyrfc: so faz sentido se o Python respondeu. Roda com a lib do SDK no
+  //    PATH, que e exatamente como o server MCP vai rodar.
+  if (pyOk) {
+    const envPy = withSdkPath(settings, Object.assign({}, process.env));
+    r = spawnSync(python, ['-c', 'import pyrfc;print(getattr(pyrfc,"__version__","?"))'],
+                  { timeout: 30000, encoding: 'utf8', env: envPy });
+    const saida = String((r.stdout || '') + (r.stderr || '')).trim();
+    push('pyrfc', !r.error && r.status === 0, saida.split(/\r?\n/).slice(-3).join(' / '));
+  } else {
+    push('pyrfc', false, '');
+  }
+
+  // 5. vsp: o bridge nao serve pra nada sem o cliente ADT
+  push('vsp', !!(settings.vsp_path && fs.existsSync(settings.vsp_path)), settings.vsp_path || '');
+
+  return { ok: checks.every(c => c.ok), checks, bridgeDir: BRIDGE_DIR };
+});
+
+// Teste de conexao ("ping") de um ambiente - Cloud, On-Premise ou RFC.
 // Faz uma busca ADT leve (search) pelo profile, que valida TLS + auth + ADT.
-ipcMain.handle('vsp:test', (_evt, payload) => {
+//
+// Nas conexoes RFC o teste tem DOIS estagios, de proposito: o selftest do bridge
+// isola o trecho RFC (SDK/pyrfc/router/credencial/FM) e da mensagem clara, e so
+// depois o vsp roda por cima do bridge. Sem isso, qualquer falha do lado RFC
+// chegaria disfarcada de "vsp nao conectou".
+// ---------------------------------------------------------------------------
+
+// Roda `vsp -s <id> search CLAS --max 1` e classifica o resultado.
+function runVspSearch(settings, projectPath, id, childEnv) {
   return new Promise((resolve) => {
-    const { settings, env } = payload;
-    const projectPath = folderOfEnv(env);
-    const id = envIdOf(env);
-    if (!projectPath) {
-      resolve({ ok: false, key: 'be.noFolderForConn' });
-      return;
-    }
-
-    if (!fs.existsSync(settings.vsp_path)) {
-      resolve({ ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] });
-      return;
-    }
-    fs.mkdirSync(projectPath, { recursive: true });
-
-    // Pre-checagens de credencial pra dar mensagem clara.
-    if (env.auth_type === 'cloud') {
-      const ck = cookieStatusOf(projectPath, env);
-      // separa "nunca logou" de "logou mas venceu": a acao e a mesma, mas o
-      // segundo caso confunde bem mais sem a mensagem certa
-      if (ck.state === 'expired') {
-        purgeCookie(projectPath, env); // nao serve mais: sai da frente
-        resolve({ ok: false, key: 'be.testCookieExpired', args: [id] });
-        return;
-      }
-      if (ck.state !== 'valid') {
-        resolve({ ok: false, key: 'be.testNoCookie', args: [id] });
-        return;
-      }
-    }
-    if (env.auth_type === 'onprem' && !env.password) {
-      resolve({ ok: false, key: 'be.testNoPassword', args: [id] });
-      return;
-    }
-
-    // Garante que o .vsp.json tem este sistema (o subcomando `-s` le dele).
-    const vspFile = path.join(projectPath, '.vsp.json');
-    let vspJson = readJson(vspFile, { systems: {} });
-    if (!vspJson.systems) vspJson.systems = {};
-    vspJson.systems[id] = buildSystemEntry(projectPath, env);
-    if (!vspJson.default) vspJson.default = id;
-    writeJson(vspFile, vspJson);
-
-    // On-prem precisa da senha no ambiente do processo.
-    const childEnv = Object.assign({}, process.env);
-    if (env.auth_type === 'onprem' && env.password) {
-      for (const v of passwordVarsOf(id)) childEnv[v] = env.password;
-    }
-
     const args = ['-s', id, 'search', 'CLAS', '--max', '1'];
     let out = '';
     let proc;
@@ -1117,6 +1526,8 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
       const low = out.toLowerCase();
       if (/certificate|x509|tls:/.test(low)) {
         finish({ ok: false, key: 'be.testTls', args: [id], log: out });
+      } else if (/adt-rfc bridge error|connection refused|econnrefused/.test(low)) {
+        finish({ ok: false, key: 'be.testBridgeDown', args: [id], log: out });
       } else if (/\b403\b|forbidden|service cannot be reached/.test(low)) {
         finish({ ok: false, key: 'be.testForbidden', args: [id], log: out });
       } else if (/\b401\b|unauthorized|password|credential|logon failed|cookie/.test(low)) {
@@ -1128,13 +1539,118 @@ ipcMain.handle('vsp:test', (_evt, payload) => {
       }
     });
 
-    // Timeout de seguranca (45s).
     setTimeout(() => {
       try { proc.kill(); } catch (e) {}
       finish({ ok: false, key: 'be.testFail', args: [id], log: out });
     }, 45000);
   });
+}
+
+// Ambiente de processo pra rodar Python do bridge (RFC_* + lib do SDK no PATH).
+function bridgeChildEnv(settings, env) {
+  return withSdkPath(settings, Object.assign({}, process.env, bridgeEnvFor(settings, env)));
+}
+
+ipcMain.handle('vsp:test', async (_evt, payload) => {
+  const { settings, env } = payload;
+  const projectPath = folderOfEnv(env);
+  const id = envIdOf(env);
+  if (!projectPath) return { ok: false, key: 'be.noFolderForConn' };
+  if (!fs.existsSync(settings.vsp_path)) {
+    return { ok: false, key: 'be.vspNotFound', args: [settings.vsp_path] };
+  }
+  fs.mkdirSync(projectPath, { recursive: true });
+
+  // Pre-checagens de credencial pra dar mensagem clara.
+  if (env.auth_type === 'cloud') {
+    const ck = cookieStatusOf(projectPath, env);
+    // separa "nunca logou" de "logou mas venceu": a acao e a mesma, mas o
+    // segundo caso confunde bem mais sem a mensagem certa
+    if (ck.state === 'expired') {
+      purgeCookie(projectPath, env); // nao serve mais: sai da frente
+      return { ok: false, key: 'be.testCookieExpired', args: [id] };
+    }
+    if (ck.state !== 'valid') return { ok: false, key: 'be.testNoCookie', args: [id] };
+  }
+  if (env.auth_type !== 'cloud' && !env.password) {
+    return { ok: false, key: 'be.testNoPassword', args: [id] };
+  }
+  if (env.auth_type === 'rfc' && !env.ashost) {
+    return { ok: false, key: 'be.testNoAshost', args: [id] };
+  }
+
+  // Garante que o .vsp.json tem este sistema (o subcomando `-s` le dele).
+  const vspFile = path.join(projectPath, '.vsp.json');
+  const vspJson = readJson(vspFile, { systems: {} });
+  if (!vspJson.systems) vspJson.systems = {};
+  vspJson.systems[id] = buildSystemEntry(projectPath, env);
+  if (!vspJson.default) vspJson.default = id;
+  writeJson(vspFile, vspJson);
+
+  // On-prem/RFC precisam da senha no ambiente do processo.
+  const childEnv = Object.assign({}, process.env);
+  if (env.auth_type !== 'cloud' && env.password) {
+    for (const v of passwordVarsOf(id)) childEnv[v] = env.password;
+  }
+
+  if (env.auth_type !== 'rfc') {
+    return runVspSearch(settings, projectPath, id, childEnv);
+  }
+
+  // ---------------- RFC: selftest do bridge, depois o vsp por cima ----------
+  if (!ensureBridgeFiles()) return { ok: false, key: 'be.bridgeScriptsFail' };
+  const python = resolvePython(settings);
+  const rfcEnv = bridgeChildEnv(settings, env);
+
+  const st = spawnSync(python, [BRIDGE_SCRIPT, 'selftest'], {
+    env: rfcEnv, timeout: 90000, encoding: 'utf8'
+  });
+  const stLog = String((st.stdout || '') + (st.stderr || ''));
+  if (st.error && st.error.code === 'ENOENT') {
+    return { ok: false, key: 'be.bridgeNoPython', args: [python] };
+  }
+  if (!/SELFTEST status:\s*200/.test(stLog)) {
+    const low = stLog.toLowerCase();
+    // pyrfc ausente/mal instalado e o erro mais comum, e o traceback dele nao e
+    // nada obvio: vale separar dos erros vindos do proprio SAP.
+    const key = /no module named .?pyrfc|dll load failed|cannot open shared object/.test(low)
+      ? 'be.bridgeNoPyrfc'
+      : 'be.testRfcSelftest';
+    return { ok: false, key, args: [id], log: stLog };
+  }
+
+  // Sobe um bridge SO pra este teste, numa porta livre qualquer, pra nao brigar
+  // com o bridge que o host MCP possa ter deixado no ar na porta oficial.
+  const porta = await freePort();
+  const testEnv = Object.assign({}, rfcEnv, { BRIDGE_PORT: String(porta) });
+  let bridge;
+  try {
+    bridge = spawn(python, [BRIDGE_SCRIPT], { env: testEnv, stdio: 'ignore' });
+    // Obrigatorio: 'error' sem listener num ChildProcess VIRA EXCECAO e derruba o
+    // main do Electron. Quem reporta a falha e o waitForPort abaixo.
+    bridge.on('error', () => {});
+  } catch (e) {
+    return { ok: false, key: 'be.bridgeStartFail', args: [e.message], log: stLog };
+  }
+  try {
+    if (!await waitForPort(porta, 15000)) {
+      return { ok: false, key: 'be.bridgeStartFail', args: ['timeout'], log: stLog };
+    }
+    // o .vsp.json aponta pra porta oficial; pro teste, reescreve com a porta temporaria
+    vspJson.systems[id] = buildSystemEntry(projectPath, Object.assign({}, env, { bridge_port: porta }));
+    writeJson(vspFile, vspJson);
+    const res = await runVspSearch(settings, projectPath, id, childEnv);
+    return Object.assign({}, res, { log: stLog + '\n' + (res.log || '') });
+  } finally {
+    try { bridge.kill(); } catch (e) { /* ja morreu */ }
+    // devolve o .vsp.json pra porta oficial da conexao
+    try {
+      vspJson.systems[id] = buildSystemEntry(projectPath, env);
+      writeJson(vspFile, vspJson);
+    } catch (e) { /* pasta sumiu no meio: nao ha o que restaurar */ }
+  }
 });
+
 
 // Abrir a pasta do projeto no VSCode
 // ---------------------------------------------------------------------------

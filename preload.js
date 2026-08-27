@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('api', {
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),
   cookiesStatus: (p)       => ipcRenderer.invoke('cookies:status', p),
+  // diagnostico dos pre-requisitos do bridge RFC (Python x64, pyrfc, NW RFC SDK)
+  bridgeDiagnose: (p)      => ipcRenderer.invoke('bridge:diagnose', p),
   // abrir o projeto em: 'vscode' | 'claude' | 'codex'
   openIn: (p)              => ipcRenderer.invoke('open:in', p),
   openFolder: (p)          => ipcRenderer.invoke('folder:open', p),

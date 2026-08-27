@@ -6,3 +6,8 @@ out/
 *.exe
 build/icon-preview.png
 tutorial.pptx
+
+# runtime do bridge RFC (Python + pyrfc) - baixado no build por scripts/fetch-bridge-runtime.js
+vendor/
+# logs do bridge RFC (contem URIs de request) - gerados ao rodar o script na mao
+bridge/*.log

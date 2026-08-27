@@ -113,6 +113,31 @@
             <div class="field">
               <p class="hint" data-i18n-html="settings.apps.hint"><b>Claude Code</b> and <b>Codex</b> need no command here — <b>Open in</b> opens their desktop apps directly.</p>
             </div>
+
+            <hr />
+            <h3 class="sub-title" data-i18n="settings.bridge.title">SAProuter connections (RFC bridge)</h3>
+            <p class="hint" data-i18n-html="settings.bridge.hint">Only for connections of type <b>SAProuter (RFC)</b>. The app ships its own Python + <code>pyrfc</code>, so there is nothing to install. What it cannot ship is the <b>SAP NW RFC SDK</b> (<code>sapnwrfc.dll</code>) — SAP does not allow redistributing it. It normally comes with SAP GUI already.</p>
+            <div class="grid2">
+              <div class="field">
+                <label data-i18n="settings.python">Python (optional)</label>
+                <div class="row">
+                  <input id="set-python" type="text" data-i18n-ph="settings.python.ph" placeholder="(bundled with the app)" />
+                  <button class="btn btn-sm" data-pick="python" data-i18n="browse">Browse…</button>
+                </div>
+              </div>
+              <div class="field">
+                <label data-i18n="settings.nwrfc">SAP NW RFC SDK folder (optional)</label>
+                <div class="row">
+                  <input id="set-nwrfc" type="text" placeholder="C:/nwrfcsdk" />
+                  <button class="btn btn-sm" data-pick="nwrfclib" data-i18n="browse">Browse…</button>
+                </div>
+                <p class="hint" data-i18n-html="settings.nwrfc.hint">Only needed when <code>sapnwrfc.dll</code> is not already in <code>System32</code>. Point at the SDK root or its <code>lib</code> folder — it becomes <code>SAPNWRFC_HOME</code>.</p>
+              </div>
+            </div>
+            <div class="row">
+              <button id="btn-diagnose" class="btn btn-sm" data-i18n="settings.bridge.diagnose">Run bridge diagnostics</button>
+            </div>
+            <div id="diag-box" class="diag hidden"></div>
             <div class="row end">
               <button id="btn-save-settings" class="btn btn-sm btn-primary"
                 data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
@@ -166,7 +191,12 @@
         </div>
 
         <div class="field">
-          <label data-i18n="f.auth">Authentication type</label>
+          <div class="row between">
+            <label data-i18n="f.auth">Authentication type</label>
+            <!-- puxa servidor/sysnr/rota da lista do SAP GUI para ESTA conexao -->
+            <button id="f-import" type="button" class="btn btn-sm btn-ghost"
+              data-i18n="f.import" data-i18n-title="f.import.title">Pull from SAP GUI</button>
+          </div>
           <div class="seg">
             <label class="seg-opt">
               <input type="radio" name="auth" value="onprem" checked />
@@ -176,17 +206,49 @@
               <input type="radio" name="auth" value="cloud" />
               <span data-i18n="auth.cloud">Public</span>
             </label>
+            <label class="seg-opt">
+              <input type="radio" name="auth" value="rfc" />
+              <span data-i18n="auth.rfc">SAProuter (RFC)</span>
+            </label>
           </div>
         </div>
 
         <div class="grid2">
-          <div class="field">
+          <div id="url-field" class="field">
             <label data-i18n="f.url">URL *</label>
             <input id="f-url" type="text" placeholder="https://myXXXXXX.s4hana.cloud.sap  ·  http://host:8000" />
           </div>
           <div class="field">
             <label data-i18n="f.sapclient">SAP client *</label>
             <input id="f-sapclient" type="text" placeholder="100" />
+          </div>
+        </div>
+
+        <!-- so RFC (SAProuter): a conexao vai por RFC ate a FM SADT_REST_RFC_ENDPOINT -->
+        <div id="rfc-fields" class="hidden">
+          <div class="warnbox">
+            <b data-i18n="f.rfc.warn.title">Activation does not work over the RFC bridge.</b>
+            <span data-i18n="f.rfc.warn.body">The function module is stateless per call, so lock and activate land in different sessions. Count on read, search and analyze here — writing/activating still needs Eclipse ADT.</span>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label data-i18n="f.ashost">Application server (as SAP sees it) *</label>
+              <input id="f-ashost" type="text" placeholder="10.0.0.1 / sapdev01" />
+            </div>
+            <div class="field">
+              <label data-i18n="f.sysnr">System number *</label>
+              <input id="f-sysnr" type="text" placeholder="00" />
+            </div>
+          </div>
+          <div class="field">
+            <label data-i18n="f.saprouter">SAProuter route string</label>
+            <input id="f-saprouter" type="text" placeholder="/H/router.example.com/S/3299" />
+            <p class="hint" data-i18n="f.saprouter.hint">Leave empty if the system is reachable directly over RFC, with no router in front.</p>
+          </div>
+          <div class="field">
+            <label data-i18n="f.bridgeport">Local bridge port *</label>
+            <input id="f-bridgeport" type="text" placeholder="8410" />
+            <p class="hint" id="f-bridgeport-hint" data-i18n-html="f.bridgeport.hint">One port per connection. vsp talks to <code>http://127.0.0.1:&lt;port&gt;</code>.</p>
           </div>
         </div>
 
@@ -206,11 +268,15 @@
               </div>
             </div>
           </div>
-          <label class="check">
-            <input id="f-insecure" type="checkbox" />
-            <span data-i18n="f.insecure">Self-signed certificate server (--insecure)</span>
-          </label>
-          <p class="hint" data-i18n="f.insecure.hint">Most private servers use a self-signed certificate — keep this on unless you know the cert is valid.</p>
+          <!-- so Private: numa RFC o vsp fala HTTP puro com o bridge no loopback,
+               nao existe TLS pra relaxar -->
+          <div id="insecure-box">
+            <label class="check">
+              <input id="f-insecure" type="checkbox" />
+              <span data-i18n="f.insecure">Self-signed certificate server (--insecure)</span>
+            </label>
+            <p class="hint" data-i18n="f.insecure.hint">Most private servers use a self-signed certificate — keep this on unless you know the cert is valid.</p>
+          </div>
         </div>
 
         <hr />
@@ -257,7 +323,7 @@
   <div id="importmodal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3 data-i18n="import.title">Import from SAP GUI</h3>
+        <h3 id="import-title" data-i18n="import.title">Import from SAP GUI</h3>
         <button id="importmodal-close" class="icon-btn">✕</button>
       </div>
       <div class="modal-body">

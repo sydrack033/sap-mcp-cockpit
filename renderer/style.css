@@ -239,6 +239,7 @@ body {
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row.end { justify-content: flex-end; }
+.row.between { justify-content: space-between; }
 
 input[type=text], input[type=password], select {
   width: 100%;
@@ -618,6 +619,15 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 .modal-foot { gap: 8px; justify-content: flex-end; }
 .modal-body { padding: 18px; overflow-y: auto; }
 .onprem.hidden { display: none; }
+/* ATENCAO: nao existe uma regra `.hidden` generica neste arquivo -- toda ocorrencia
+   e escopada ao elemento. Quem adicionar um bloco novo e so chamar
+   classList.toggle('hidden') NAO vai esconder nada; tem que entrar aqui tambem. */
+#rfc-fields.hidden,
+#insecure-box.hidden,
+#url-field.hidden { display: none; }
+/* o campo de texto do dialogo so aparece no modo prompt; sem isto ele saia
+   tambem nos alerts e confirms comuns */
+#confirm-input.hidden { display: none; }
 
 /* dialogo in-app (alert/confirm) */
 .modal-card.modal-sm { width: 420px; }
@@ -637,3 +647,56 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
   max-height: 60vh;
   overflow-y: auto;
 }
+
+/* ---------- Conexoes RFC: aviso do formulario e diagnostico do bridge ----------
+   O aviso nao e decorativo: o limite de ativacao do bridge muda o que da pra
+   pedir ao agente, e quem so olha o formulario nao teria como saber. */
+.warnbox {
+  display: block;
+  border: 1px solid var(--amber);
+  border-left-width: 3px;
+  background: rgba(224, 167, 64, 0.08);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.warnbox b { color: var(--amber); display: block; margin-bottom: 3px; }
+
+.sub-title {
+  font-size: 13px;
+  margin: 0 0 4px;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.diag { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.diag.hidden { display: none; }
+.diag-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.diag-row.ok  { border-left-color: var(--green); }
+.diag-row.err { border-left-color: var(--red); }
+.diag-icon { font-weight: 700; line-height: 1.4; }
+.diag-row.ok  .diag-icon { color: var(--green); }
+.diag-row.err .diag-icon { color: var(--red); }
+.diag-name { font-size: 13px; }
+/* caminhos e versoes: quebram em qualquer ponto pra nao estourar o painel */
+.diag-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: Consolas, monospace;
+  margin-top: 2px;
+  word-break: break-all;
+}
+.diag-hint { font-size: 11px; color: var(--amber); margin-top: 4px; line-height: 1.5; }

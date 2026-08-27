@@ -11,6 +11,9 @@ const cookieState = new Map();
 let selectedId = null;          // profile id da conexao aberta no detalhe
 const collapsed = new Set();    // nomes de cliente com o grupo fechado (so nesta sessao)
 let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob demanda
+// 'new'  = escolher um sistema CRIA uma conexao (botao Import da sidebar)
+// 'form' = escolher um sistema PREENCHE o formulario aberto (botao dentro do modal)
+let importMode = 'new';
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
 
 const $ = (id) => document.getElementById(id);
@@ -48,6 +51,41 @@ function slug(text) {
     .replace(/^-+|-+$/g, '');
 }
 function profileId(e) { return slug(e.client_name) + '-' + slug(e.env_name); }
+
+// ---------------------------------------------------------------------------
+// Conexoes RFC (SAProuter)
+// A URL nao e digitada: ela aponta pro bridge local, entao sai da porta.
+// ---------------------------------------------------------------------------
+const BRIDGE_PORT_BASE = 8410;
+
+function bridgePortOf(e) {
+  const n = parseInt((e && e.bridge_port) || '', 10);
+  return (n >= 1 && n <= 65535) ? n : BRIDGE_PORT_BASE;
+}
+
+function urlOfEnv(e) {
+  if (e && e.auth_type === 'rfc') return 'http://127.0.0.1:' + bridgePortOf(e);
+  return (e && e.url) || '';
+}
+
+// Menor porta livre a partir da base. Duas conexoes na mesma porta seria pior do
+// que parece: a segunda encontraria o bridge da PRIMEIRA ja escutando e falaria
+// com o sistema errado, sem erro nenhum.
+function nextBridgePort(exceptIdx) {
+  const usadas = new Set((clients.environments || [])
+    .filter((x, i) => x.auth_type === 'rfc' && i !== exceptIdx)
+    .map(bridgePortOf));
+  let porta = BRIDGE_PORT_BASE;
+  while (usadas.has(porta)) porta++;
+  return porta;
+}
+
+function authLabel(e) {
+  if (!e) return '';
+  if (e.auth_type === 'cloud') return t('auth.cloud');
+  if (e.auth_type === 'rfc')   return t('auth.rfc');
+  return t('auth.onprem');
+}
 
 function setStatus(msg, kind) {
   const bar = document.querySelector('.statusbar');
@@ -134,11 +172,16 @@ function fillSettings() {
   $('set-vsp').value     = settings.vsp_path || '';
   $('set-chrome').value  = settings.chrome_path || '';
   $('set-vscode').value  = settings.vscode_cmd || 'code';
+  // vazio de proposito: vazio = usa o Python que vem junto no app
+  $('set-python').value  = settings.python_path || '';
+  $('set-nwrfc').value   = settings.nwrfc_lib || '';
 }
 function readSettingsFromForm() {
   settings.vsp_path     = $('set-vsp').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
+  settings.python_path  = $('set-python').value.trim();
+  settings.nwrfc_lib    = $('set-nwrfc').value.trim();
 }
 
 async function saveSettings() {
@@ -481,10 +524,16 @@ function renderDetail() {
   // so leitura, entao o asterisco sai
   const lbl = (key) => t(key).replace(/\s*\*$/, '');
   const rows = [
-    [lbl('f.auth'), e.auth_type === 'cloud' ? t('auth.cloud') : t('auth.onprem')],
-    [lbl('f.url'), e.url || '—'],
+    [lbl('f.auth'), authLabel(e)],
+    [lbl('f.url'), urlOfEnv(e) || '—'],
     [lbl('f.sapclient'), e.sap_client || '—'],
-    [lbl('f.user'), e.auth_type === 'onprem' ? (e.user || '—') : '—'],
+    [lbl('f.user'), e.auth_type !== 'cloud' ? (e.user || '—') : '—'],
+    // a rota RFC so aparece onde existe: nas outras conexoes seriam tres linhas vazias
+    ...(e.auth_type === 'rfc' ? [
+      [lbl('f.ashost'), (e.ashost || '—') + ' · sysnr ' + (e.sysnr || '00')],
+      [lbl('f.saprouter'), e.saprouter || t('detail.noRouter')],
+      [lbl('f.bridgeport'), String(bridgePortOf(e))]
+    ] : []),
     [lbl('f.mode'), e.mode || 'focused'],
     [lbl('f.lang'), e.language || '—'],
     // a pasta decide onde vao a config e o cookie: merece estar visivel aqui
@@ -578,7 +627,13 @@ function uniqueEnvName(client, base) {
 // ---------------------------------------------------------------------------
 function setAuthType(type) {
   document.querySelector(`input[name=auth][value=${type}]`).checked = true;
-  $('onprem-fields').classList.toggle('hidden', type !== 'onprem');
+  // RFC tambem autentica com usuario/senha, entao reaproveita o bloco Private —
+  // menos o --insecure, que so faz sentido em HTTPS de verdade.
+  $('onprem-fields').classList.toggle('hidden', type === 'cloud');
+  $('insecure-box').classList.toggle('hidden', type !== 'onprem');
+  $('rfc-fields').classList.toggle('hidden', type !== 'rfc');
+  // numa RFC a URL e derivada da porta do bridge: nao ha o que digitar
+  $('url-field').classList.toggle('hidden', type === 'rfc');
 }
 function currentAuthType() {
   return document.querySelector('input[name=auth]:checked').value;
@@ -614,6 +669,11 @@ function openModal(idx, opts) {
   setPassVisible(false); // toda vez que o modal abre a senha volta escondida
   // on-prem self-signed e a regra → liga por padrao em conexao nova
   $('f-insecure').checked = e ? !!e.insecure : true;
+  $('f-ashost').value    = e ? (e.ashost || '') : '';
+  $('f-sysnr').value     = e ? (e.sysnr || '') : '00';
+  $('f-saprouter').value = e ? (e.saprouter || '') : '';
+  // conexao nova ja nasce numa porta livre; editando, mantem a dela
+  $('f-bridgeport').value = (e && e.bridge_port) ? e.bridge_port : nextBridgePort(editIndex);
   $('f-mode').value      = e ? (e.mode || 'focused') : 'focused';
   $('f-lang').value      = e ? (e.language || '') : '';
   $('f-readonly').checked    = e ? !!e.read_only : false;
@@ -663,7 +723,14 @@ async function saveEnv() {
     client_name: $('f-client').value.trim(),
     env_name:    $('f-env').value.trim(),
     auth_type:   authType,
-    url:         $('f-url').value.trim(),
+    // RFC: a URL aponta pro bridge local, derivada da porta — nao ha campo pra ela
+    url:         authType === 'rfc'
+      ? 'http://127.0.0.1:' + (parseInt($('f-bridgeport').value, 10) || BRIDGE_PORT_BASE)
+      : $('f-url').value.trim(),
+    ashost:      $('f-ashost').value.trim(),
+    sysnr:       $('f-sysnr').value.trim() || '00',
+    saprouter:   $('f-saprouter').value.trim(),
+    bridge_port: parseInt($('f-bridgeport').value, 10) || BRIDGE_PORT_BASE,
     sap_client:  $('f-sapclient').value.trim(),
     user:        $('f-user').value.trim(),
     password:    $('f-pass').value,
@@ -678,14 +745,30 @@ async function saveEnv() {
   // validacao
   if (!e.client_name || !e.env_name || !e.url || !e.sap_client) {
     appAlert(t('alert.required')).then(() => {
-      const first = ['f-client', 'f-env', 'f-url', 'f-sapclient'].find(id2 => !$(id2).value.trim());
+      const campos = authType === 'rfc'
+        ? ['f-client', 'f-env', 'f-sapclient']
+        : ['f-client', 'f-env', 'f-url', 'f-sapclient'];
+      const first = campos.find(id2 => !$(id2).value.trim());
       if (first) $(first).focus();
     });
     return;
   }
-  if (authType === 'onprem' && !e.user) {
+  if (authType !== 'cloud' && !e.user) {
     appAlert(t('alert.onpremUser')).then(() => $('f-user').focus());
     return;
+  }
+  if (authType === 'rfc') {
+    if (!e.ashost) {
+      appAlert(t('alert.rfcAshost')).then(() => $('f-ashost').focus());
+      return;
+    }
+    // porta repetida faria esta conexao falar com o bridge da outra, calada
+    const conflito = (clients.environments || []).find((x, i) =>
+      x.auth_type === 'rfc' && i !== editIndex && bridgePortOf(x) === e.bridge_port);
+    if (conflito) {
+      appAlert(t('alert.rfcPort', e.bridge_port, profileId(conflito))).then(() => $('f-bridgeport').focus());
+      return;
+    }
   }
 
   // checa profile id duplicado
@@ -723,12 +806,18 @@ async function saveEnv() {
 // import preencher cliente/ambiente/URL sugerida e mandar o usuario conferir no
 // formulario, em vez de gravar direto.
 // ---------------------------------------------------------------------------
-async function openImport() {
+async function openImport(mode) {
+  importMode = (mode === 'form') ? 'form' : 'new';
   setStatus(t('import.loading'));
   const res = await window.api.sapLandscape();
   if (!res.ok) { setStatus('✗ ' + msgOf(res), 'err'); return; }
   landscapeCache = res;
-  $('import-source').textContent = t('import.source', res.file, res.count);
+  // com <Include> o landscape pode vir de mais de um arquivo; so vale dizer quando ha
+  const extras = ((res.files || []).length - 1);
+  $('import-source').textContent = extras > 0
+    ? t('import.sourceMulti', res.file, res.count, extras)
+    : t('import.source', res.file, res.count);
+  $('import-title').textContent = t(importMode === 'form' ? 'import.titleFill' : 'import.title');
   $('import-search').value = '';
   renderImport();
   $('importmodal').classList.remove('hidden');
@@ -786,21 +875,74 @@ function renderImport() {
 
 function pickImport(group, svc) {
   $('importmodal').classList.add('hidden');
-  openModal(-1, {
-    prefill: {
-      client_name: group.name || '',
-      env_name: svc.name || svc.systemid || '',
-      auth_type: 'onprem',
-      url: svc.url || '',
-      sap_client: '',
-      insecure: true
-    },
-    focus: 'f-sapclient' // o mandante e o campo que o arquivo do SAP nao tem
-  });
+  // aberto de dentro do formulario: preenche a conexao atual em vez de criar outra
+  if (importMode === 'form') { fillFormFrom(group, svc); return; }
+
+  // Conexao com SAProuter no SAP GUI e justamente o caso em que o HTTP direto
+  // costuma nao existir. E o arquivo do SAP ja traz TUDO que o bridge precisa:
+  // a rota, o host e a instancia (derivada da porta DIAG 32NN).
+  const viaRouter = !!svc.router;
+  const prefill = viaRouter
+    ? {
+        client_name: group.name || '',
+        env_name: svc.name || svc.systemid || '',
+        auth_type: 'rfc',
+        sap_client: '',
+        ashost: svc.host || svc.server || '',
+        sysnr: svc.instance || '00',
+        saprouter: svc.router,
+        bridge_port: nextBridgePort(-1)
+      }
+    : {
+        client_name: group.name || '',
+        env_name: svc.name || svc.systemid || '',
+        auth_type: 'onprem',
+        url: svc.url || '',
+        sap_client: '',
+        insecure: true
+      };
+
+  openModal(-1, { prefill, focus: 'f-sapclient' }); // o mandante e o que o arquivo do SAP nao tem
+
+  if (viaRouter) {
+    setStatus(t('import.router', svc.router), 'warn');
+    return;
+  }
   // a URL e derivada da porta DIAG por convencao (32NN -> 80NN): avisa pra conferir
   setStatus(svc.url
     ? t('import.check', svc.server, svc.url)
     : t('import.noPort', svc.server), 'warn');
+}
+
+// Preenche o formulario JA ABERTO com o sistema escolhido.
+//
+// So escreve o que o arquivo do SAP GUI realmente sabe: servidor, instancia e
+// rota. Cliente e ambiente so entram se estiverem vazios (editando uma conexao,
+// o nome que voce deu vale mais que o do SAP GUI), e usuario/senha/pasta nunca
+// sao tocados.
+function fillFormFrom(group, svc) {
+  if (!$('f-client').value.trim() && group.name) {
+    $('f-client').value = group.name;
+    onClientChanged();
+  }
+  if (!$('f-env').value.trim()) $('f-env').value = svc.name || svc.systemid || '';
+
+  $('f-ashost').value    = svc.host || svc.server || '';
+  $('f-sysnr').value     = svc.instance || '00';
+  $('f-saprouter').value = svc.router || '';
+  if (svc.url) $('f-url').value = svc.url;
+
+  const rotulo = svc.name || svc.systemid || '';
+  if (svc.router) {
+    // ter router e justamente o caso em que o HTTP direto costuma nao existir
+    setAuthType('rfc');
+    if (!$('f-bridgeport').value.trim()) $('f-bridgeport').value = nextBridgePort(editIndex);
+    setStatus(t('import.filledRfc', rotulo, svc.router), 'warn');
+  } else {
+    // sem router NAO troca o tipo: pode ter sido escolha deliberada do usuario
+    setStatus(svc.url ? t('import.filled', rotulo, svc.url) : t('import.filledNoPort', rotulo), 'warn');
+  }
+  syncFolderHint();
 }
 
 // ---------------------------------------------------------------------------
@@ -810,9 +952,12 @@ function pickImport(group, svc) {
 // vspKilled: numero derrubado; null = derrubou mas nao da pra contar (pkill).
 function killedNote(res) {
   if (!res || !res.ok) return '';
-  if (res.vspKilled === null) return ' — ' + t('msg.vspKilledSome');
-  if (res.vspKilled > 0) return ' — ' + t('msg.vspKilled', res.vspKilled);
-  return '';
+  const notas = [];
+  if (res.vspKilled === null)   notas.push(t('msg.vspKilledSome'));
+  else if (res.vspKilled > 0)   notas.push(t('msg.vspKilled', res.vspKilled));
+  if (res.bridgeKilled === null) notas.push(t('msg.bridgeKilledSome'));
+  else if (res.bridgeKilled > 0) notas.push(t('msg.bridgeKilled', res.bridgeKilled));
+  return notas.length ? ' — ' + notas.join(', ') : '';
 }
 
 const OPEN_LABELS = { vscode: 'VSCode', claude: 'Claude Code', codex: 'Codex' };
@@ -937,6 +1082,63 @@ async function doLogin(env, btn) {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostico do bridge RFC
+//
+// A cadeia SDK x64 <-> Python x64 <-> pyrfc falha sempre com o mesmo traceback
+// ilegivel. Aqui cada elo vira uma linha com o motivo e o que fazer.
+// ---------------------------------------------------------------------------
+const DIAG_ORDER = ['python', 'sdk', 'pyrfc', 'scripts', 'vsp'];
+
+async function doDiagnose(btn) {
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+
+  const box = $('diag-box');
+  box.classList.remove('hidden');
+  box.textContent = t('diag.running');
+  if (btn) btn.disabled = true;
+
+  const res = await window.api.bridgeDiagnose({ settings });
+
+  if (btn) btn.disabled = false;
+  box.innerHTML = '';
+  const checks = (res.checks || []).slice()
+    .sort((a, b) => DIAG_ORDER.indexOf(a.id) - DIAG_ORDER.indexOf(b.id));
+
+  for (const c of checks) {
+    const row = document.createElement('div');
+    row.className = 'diag-row ' + (c.ok ? 'ok' : 'err');
+
+    const icon = document.createElement('span');
+    icon.className = 'diag-icon';
+    icon.textContent = c.ok ? '✓' : '✗';
+
+    const txt = document.createElement('div');
+    const nome = document.createElement('div');
+    nome.className = 'diag-name';
+    nome.textContent = t('diag.' + c.id);
+    txt.appendChild(nome);
+
+    if (c.detail) {
+      const d = document.createElement('div');
+      d.className = 'diag-detail';
+      d.textContent = c.detail;
+      txt.appendChild(d);
+    }
+    if (!c.ok) {
+      const h = document.createElement('div');
+      h.className = 'diag-hint';
+      // o backend pode mandar uma dica mais especifica que a padrao do check
+      h.textContent = t(c.hintKey || ('diag.' + c.id + '.hint'));
+      txt.appendChild(h);
+    }
+    row.append(icon, txt);
+    box.appendChild(row);
+  }
+  setStatus((res.ok ? '✓ ' : '✗ ') + t(res.ok ? 'diag.allOk' : 'diag.someFail'), res.ok ? 'ok' : 'err');
+}
+
+// ---------------------------------------------------------------------------
 // Pick file/folder
 // ---------------------------------------------------------------------------
 async function pick(kind) {
@@ -947,6 +1149,12 @@ async function pick(kind) {
   } else if (kind === 'chrome') {
     const p = await window.api.pickFile({ title: t('pick.browser'), filters: exeFilters });
     if (p) $('set-chrome').value = p;
+  } else if (kind === 'python') {
+    const p = await window.api.pickFile({ title: t('pick.python'), filters: exeFilters });
+    if (p) $('set-python').value = p;
+  } else if (kind === 'nwrfclib') {
+    const p = await window.api.pickFolder({ title: t('pick.nwrfc') });
+    if (p) $('set-nwrfc').value = p;
   } else if (kind === 'folder') {
     const cliente = $('f-client').value.trim();
     const p = await window.api.pickFolder({ title: t('pick.clientFolder', cliente || '…') });
@@ -975,6 +1183,7 @@ function bind() {
 
   // settings
   $('btn-save-settings').onclick = saveSettings;
+  $('btn-diagnose').onclick = function () { doDiagnose(this); };
   document.querySelectorAll('[data-pick]').forEach(btn => {
     btn.onclick = () => pick(btn.getAttribute('data-pick'));
   });
@@ -982,7 +1191,8 @@ function bind() {
   // conexoes
   $('btn-new').onclick       = () => openModal(-1);
   $('btn-new-group').onclick = newGroup;
-  $('btn-import').onclick    = openImport;
+  $('btn-import').onclick    = () => openImport('new');
+  $('f-import').onclick      = () => openImport('form');
   $('btn-toggle-all').onclick = toggleAllGroups;
   $('env-search').oninput    = renderTree;
   $('filter-global').onchange = renderTree;

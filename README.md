@@ -2,7 +2,7 @@
 
 App desktop (Electron) que **liga seu assistente de IA (Claude Code / Codex) ao SAP via MCP** — sem editar `.mcp.json` / `.vsp.json` / config do Codex na mão.
 
-Você cadastra **clientes e ambientes** (Cloud SSO ou On-Premise basic auth) e o app gera toda a configuração, faz o login SSO, testa a conexão e abre o projeto no VSCode. Hoje o **motor** é o [`vsp`](https://github.com/oisee/vibing-steampunk) (vibing-steampunk); a ideia é suportar outros motores (ex.: ARC-1) no futuro.
+Você cadastra **clientes e ambientes** (Cloud SSO, On-Premise basic auth ou RFC atrás de SAProuter) e o app gera toda a configuração, faz o login SSO, testa a conexão e abre o projeto no VSCode. Hoje o **motor** é o [`vsp`](https://github.com/oisee/vibing-steampunk) (vibing-steampunk); a ideia é suportar outros motores (ex.: ARC-1) no futuro.
 
 Cada ambiente vira um MCP server nomeado `cliente-ambiente` (ex.: `mcp__acme-dev__*`).
 
@@ -28,12 +28,48 @@ npm start
 ## Como usar
 
 1. **Configurações** (topo): caminho do `vsp.exe`, pasta do projeto (workspace), caminho do Chrome, comando do VSCode (`code`). Clique **Salvar configurações**.
-2. **+ Novo ambiente**: Cliente + Ambiente (ex.: `Acme` / `DEV` → profile `acme-dev`), tipo **Cloud** (SSO) ou **On-Premise** (user + senha), URL + Client SAP, e flags (mode, `--insecure`, edits transportáveis, transports).
+2. **+ Novo ambiente**: Cliente + Ambiente (ex.: `Acme` / `DEV` → profile `acme-dev`), tipo **Cloud** (SSO), **On-Premise** (user + senha) ou **SAProuter (RFC)** (sistemas atrás de router, ver secao abaixo), URL + Client SAP, e flags (mode, `--insecure`, edits transportáveis, transports).
    - Use **expert** se for **criar/editar objeto** (precisa das tools `LockObject`/`UpdateSource`).
 3. **Login SSO** (só Cloud): no card do ambiente → **Login SSO** → conclua no Chrome → cookie salvo (`cookies-<profile>.txt`).
 4. **Testar**: pinga o ambiente (busca ADT leve) e diz se conexão + auth + ADT estão OK.
 5. **Gerar configs**: escreve a config (ver tabela abaixo) e, no fim, **encerra os processos `vsp` que ficaram rodando** — eles seguram a config antiga em memória e fariam o MCP continuar respondendo com os profiles/cookies velhos. Depois disso, **reinicie o host MCP** (Claude Code / Codex) pra ele subir o `vsp` com a config nova.
 6. **Abrir no VSCode**: abre a pasta do projeto pro Claude Code.
+
+## Conexão via SAProuter (RFC)
+
+Alguns sistemas só são alcançáveis por um SAProuter que libera rota **NI** (gateway `33nn`) e **nega** rota crua até o ICM. O `vsp` só fala HTTP, então nesses casos ele não tem caminho nenhum — embora o Eclipse ADT conecte normalmente.
+
+O tipo de conexão **SAProuter (RFC)** resolve isso. O app sobe um bridge local que empacota cada request ADT na function module padrão `SADT_REST_RFC_ENDPOINT` e a envia por RFC, atravessando o router — o mesmo caminho que o Eclipse usa:
+
+```
+Claude/Codex --MCP--> vsp --HTTP--> bridge (127.0.0.1) --RFC(+saprouter)--> SAP
+```
+
+Pro `vsp` é transparente: a URL dele vira `http://127.0.0.1:<porta>` e todas as flags (`--mode`, `--read-only`, transports) continuam valendo.
+
+### O que preencher
+
+Além de cliente/ambiente/mandante/usuário/senha: **servidor de aplicação** (o host como o SAP o conhece, normalmente interno), **número do sistema** e a **rota do SAProuter** (`/H/router/S/3299`). A URL some do formulário — ela é derivada da porta do bridge. Cada conexão RFC usa uma porta local própria.
+
+O botão **⤓ Puxar do SAP GUI** preenche esses campos a partir do `SAPUILandscape.xml`, inclusive a rota do router.
+
+### Pré-requisitos
+
+O app **já traz** o Python e o `pyrfc` embutidos — não há nada a instalar. A única peça que falta é a **`sapnwrfc.dll` x64** do SAP NW RFC SDK, que a SAP não permite redistribuir. Ela vem com o **SAP GUI 8.00 64-bit** (ou o 7.70 com o opcional *64Bit RFC Controls*), que a maioria das máquinas já tem.
+
+**Configurações → Rodar diagnóstico do bridge** checa cada elo (Python x64, SDK, `pyrfc`, scripts, `vsp`) e diz exatamente qual faltou.
+
+### Limite importante
+
+A function module é **stateless por chamada** — não existe sessão HTTP sobre RFC. Logo **ativar objeto não funciona** por esse caminho: o lock e o activate caem em sessões diferentes. Em NetWeaver 75x o lock ainda volta `MODIFICATION_SUPPORT=NoModification` e o `vsp` aborta antes de gravar.
+
+Conte com **ler, buscar e analisar**. Para gravar e ativar, use o Eclipse ADT ou um caminho HTTP(S) real até o ICM. O `CLAUDE.md`/`AGENTS.md` gerado avisa o agente disso, pra ele não queimar tokens tentando.
+
+### Build
+
+O runtime do bridge não vai no repositório. O `npm run dist` roda antes o `npm run fetch-runtime`, que baixa o Python embutível e o wheel do `pyrfc`, **confere o SHA256** e empacota em `resources/bridge-runtime` (~20 MB).
+
+> O bridge é o projeto [adt-rfc-bridge](https://github.com/enricoandreoli/adt-rfc-bridge) (MIT), de Enrico Andreoli, embarcado sem modificações em `bridge/`. Veja `bridge/NOTICE.md`.
 
 ## Arquivos / config gerados
 
