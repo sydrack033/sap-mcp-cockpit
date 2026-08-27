@@ -269,14 +269,38 @@ function sdkHomeFrom(dir) {
 }
 
 function withSdkPath(settings, envMap) {
+  const nativo = (x) => String(x).replace(/\//g, path.sep);
+  const aplicar = (dir) => {
+    const home = sdkHomeFrom(dir);
+    if (home) envMap.SAPNWRFC_HOME = nativo(home); // e ISTO que o pyrfc le
+    // PATH nao basta pro pyrfc, mas ajuda as ferramentas de linha de comando do SDK
+    envMap.PATH = nativo(dir) + path.delimiter + (process.env.PATH || '');
+    return envMap;
+  };
+
   const conf = String((settings && settings.nwrfc_lib) || '').trim();
-  if (!conf) return envMap;
-  const nativo = (x) => x.replace(/\//g, path.sep);
-  const home = sdkHomeFrom(conf);
-  if (home) envMap.SAPNWRFC_HOME = nativo(home); // e ISTO que o pyrfc le
-  // PATH nao basta pro pyrfc, mas ajuda as ferramentas de linha de comando do SDK
-  envMap.PATH = nativo(conf) + path.delimiter + (process.env.PATH || '');
-  return envMap;
+  if (conf) return aplicar(conf);
+
+  // Campo vazio: procura o SDK sozinho.
+  //
+  // Sem isto havia um buraco feio: uma DLL que esta so no PATH (e nao na
+  // System32) e ACHADA pelo diagnostico mas NAO carrega no pyrfc, porque desde o
+  // Python 3.8 o PATH nao vale pra dependencia de extensao C. O usuario via
+  // "SDK ok" e "pyrfc falhou" na mesma tela, sem pista do que fazer.
+  const achado = findSdkLib(settings);
+  if (!achado || achado.arch !== 'x64') return envMap;
+  const dir = path.dirname(achado.file);
+  // System32 ja entra na busca padrao de DLL: mexer no env so atrapalharia
+  if (isSystemDir(dir)) return envMap;
+  return aplicar(dir);
+}
+
+// System32 / SysWOW64 / a propria pasta do Windows.
+function isSystemDir(dir) {
+  const win = (process.env.WINDIR || 'C:' + path.sep + 'Windows').toLowerCase();
+  let d = String(dir || '').toLowerCase().replace(/\//g, path.sep);
+  while (d.endsWith(path.sep)) d = d.slice(0, -1); // sem literal de separador na regex
+  return d === win || d === path.join(win, 'system32') || d === path.join(win, 'syswow64');
 }
 
 // Uma porta livre qualquer, cedida pelo SO. O teste de conexao sobe um bridge
@@ -1392,6 +1416,13 @@ function sdkCandidateDirs(settings) {
   if (process.env.SAPNWRFC_HOME) add(path.join(process.env.SAPNWRFC_HOME, 'lib'));
   for (const d of String(process.env.PATH || '').split(path.delimiter)) add(d.trim());
   if (process.platform === 'win32') {
+    const win = process.env.WINDIR || 'C:/Windows';
+    add(path.join(win, 'System32'));
+    // SysWOW64 de proposito: e onde o SAP GUI de 32 bits deixa a DLL. Ela nao
+    // serve (nunca carrega num Python x64), mas ACHAR ela muda o diagnostico de
+    // "instale o SAP GUI" -- inutil pra quem ja instalou -- para "voce tem a
+    // versao 32 bits, marque o componente de 64".
+    add(path.join(win, 'SysWOW64'));
     for (const raiz of ['C:/Program Files (x86)/SAP/FrontEnd/SAPgui',
                         'C:/Program Files/SAP/FrontEnd/SAPgui',
                         'C:/Program Files (x86)/SAP/FrontEnd/SAPBI',
@@ -1412,7 +1443,7 @@ function peMachine(file) {
     const cab = Buffer.alloc(4);
     fs.readSync(fd, cab, 0, 4, 0x3C);       // e_lfanew: offset do cabecalho PE
     const m = Buffer.alloc(2);
-    fs.readSync(fd, m, 0, 2, cab.readUInt32LE(0) + 4); // PE   + Machine
+    fs.readSync(fd, m, 0, 2, cab.readUInt32LE(0) + 4); // PE\0\0 + Machine
     return ({ 0x8664: 'x64', 0x14c: 'x86', 0xAA64: 'arm64' })[m.readUInt16LE(0)] || '?';
   } catch (e) {
     return '';
@@ -1423,18 +1454,63 @@ function peMachine(file) {
 
 // Procura a DLL do SDK preferindo a x64. Uma x86 encontrada nao vira sucesso,
 // mas e guardada: dizer "achei, mas e 32 bits" vale muito mais que "nao achei".
+// Varredura de profundidade limitada nas raizes da SAP.
+//
+// A lista fixa de pastas nao basta: o componente de 64 bits do SAP GUI nao cai
+// sempre no mesmo lugar (varia por versao e por como o Basis montou o pacote).
+// Uma DLL que EXISTE mas nao e encontrada vira "instale o SAP GUI" pra quem ja
+// instalou -- o pior conselho possivel. Profundidade e numero de achados sao
+// limitados pra isso nao virar uma varredura de disco.
+function scanSdkRoots(alvo) {
+  if (process.platform !== 'win32') return [];
+  const raizes = [
+    'C:/Program Files/SAP',
+    'C:/Program Files (x86)/SAP',
+    'C:/Program Files/Common Files/SAP Shared',
+    'C:/Program Files (x86)/Common Files/SAP Shared',
+    'C:/SAP',
+    'C:/nwrfcsdk'
+  ];
+  const achados = [];
+  const alvoLower = alvo.toLowerCase();
+  const visita = (dir, resta) => {
+    if (resta < 0 || achados.length >= 8) return;
+    let itens;
+    try { itens = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const it of itens) {
+      if (achados.length >= 8) return;
+      const alvoPath = path.join(dir, it.name);
+      if (it.isDirectory()) visita(alvoPath, resta - 1);
+      else if (it.name.toLowerCase() === alvoLower) achados.push(alvoPath);
+    }
+  };
+  for (const r of raizes) visita(r, 4);
+  return achados;
+}
+
 function findSdkLib(settings) {
   const alvo = sdkLibName();
   const checaArch = process.platform === 'win32';
   let consolo = null;
-  for (const d of sdkCandidateDirs(settings)) {
+  const candidatos = sdkCandidateDirs(settings).map(d => path.join(d, alvo));
+  const avalia = (f) => {
     try {
-      const f = path.join(d, alvo);
-      if (!fs.existsSync(f)) continue;
+      if (!fs.existsSync(f)) return null;
       const arch = checaArch ? peMachine(f) : 'x64';
       if (arch === 'x64') return { file: f, arch };
       if (!consolo) consolo = { file: f, arch };
-    } catch (e) { /* caminho invalido no PATH: ignora */ }
+    } catch (e) { /* caminho invalido: ignora */ }
+    return null;
+  };
+
+  for (const f of candidatos) {
+    const bom = avalia(f);
+    if (bom) return bom;
+  }
+  // lista fixa nao deu: procura de verdade nas raizes da SAP
+  for (const f of scanSdkRoots(alvo)) {
+    const bom = avalia(f);
+    if (bom) return bom;
   }
   return consolo;
 }
@@ -1480,10 +1556,22 @@ ipcMain.handle('bridge:diagnose', (_evt, payload) => {
   //    PATH, que e exatamente como o server MCP vai rodar.
   if (pyOk) {
     const envPy = withSdkPath(settings, Object.assign({}, process.env));
-    r = spawnSync(python, ['-c', 'import pyrfc;print(getattr(pyrfc,"__version__","?"))'],
-                  { timeout: 30000, encoding: 'utf8', env: envPy });
+    // ATENCAO: nao da pra confiar no exit code de `import pyrfc`. O __init__.py do
+    // pyrfc envolve o import da extensao num try/except que faz `print(ex)` e
+    // SEGUE -- entao com a sapnwrfc.dll faltando o import "da certo" (codigo 0) e
+    // ate o __version__ responde, porque ele vem do dist-info. O unico teste
+    // honesto e perguntar se a extensao exportou mesmo alguma coisa.
+    const probe = 'import pyrfc,sys;'
+                + 'ok=hasattr(pyrfc,"Connection");'
+                + 'print(("carregado " if ok else "NAO carregou ")+getattr(pyrfc,"__version__","?"));'
+                + 'sys.exit(0 if ok else 1)';
+    r = spawnSync(python, ['-c', probe], { timeout: 30000, encoding: 'utf8', env: envPy });
     const saida = String((r.stdout || '') + (r.stderr || '')).trim();
-    push('pyrfc', !r.error && r.status === 0, saida.split(/\r?\n/).slice(-3).join(' / '));
+    const carregou = !r.error && r.status === 0;
+    // falhou por causa da DLL do SDK? entao a dica util e a do SDK, nao a de instalar pyrfc
+    const porCausaDaDll = /dll load failed|cannot open shared object|_cyrfc/i.test(saida);
+    push('pyrfc', carregou, saida.split(/\r?\n/).slice(-3).join(' / '),
+         (!carregou && porCausaDaDll) ? 'diag.pyrfc.hintSdk' : undefined);
   } else {
     push('pyrfc', false, '');
   }
@@ -1611,11 +1699,13 @@ ipcMain.handle('vsp:test', async (_evt, payload) => {
   }
   if (!/SELFTEST status:\s*200/.test(stLog)) {
     const low = stLog.toLowerCase();
-    // pyrfc ausente/mal instalado e o erro mais comum, e o traceback dele nao e
-    // nada obvio: vale separar dos erros vindos do proprio SAP.
-    const key = /no module named .?pyrfc|dll load failed|cannot open shared object/.test(low)
-      ? 'be.bridgeNoPyrfc'
-      : 'be.testRfcSelftest';
+    // Tres causas bem diferentes, que antes caiam todas na mesma mensagem.
+    // Desde que o app passou a embutir Python + pyrfc, "pyrfc faltando" so
+    // acontece se o usuario apontou um Python proprio -- o caso comum agora e a
+    // DLL do SDK, que NAO pode vir junto no instalador.
+    let key = 'be.testRfcSelftest';
+    if (/dll load failed|cannot open shared object|onerror.*sapnwrfc/.test(low)) key = 'be.bridgeNoSdk';
+    else if (/no module named .?pyrfc/.test(low)) key = 'be.bridgeNoPyrfc';
     return { ok: false, key, args: [id], log: stLog };
   }
 
