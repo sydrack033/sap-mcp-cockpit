@@ -25,6 +25,7 @@
       "main.js",
       "preload.js",
       "start.js",
+      "lib/**/*",
       "renderer/**/*",
       "bridge/**/*",
       "build/icon.ico",
