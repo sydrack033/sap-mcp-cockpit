@@ -1128,8 +1128,11 @@ async function doDiagnose(btn) {
     if (!c.ok) {
       const h = document.createElement('div');
       h.className = 'diag-hint';
-      // o backend pode mandar uma dica mais especifica que a padrao do check
-      h.textContent = t(c.hintKey || ('diag.' + c.id + '.hint'));
+      // o backend pode mandar uma dica mais especifica que a padrao do check.
+      // innerHTML aqui e seguro: a dica e string do dicionario, sem interpolacao
+      // de dado externo. O DETALHE, logo acima, e saida crua de subprocesso e
+      // continua como textContent de proposito.
+      h.innerHTML = t(c.hintKey || ('diag.' + c.id + '.hint'));
       txt.appendChild(h);
     }
     row.append(icon, txt);

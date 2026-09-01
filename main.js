@@ -1399,6 +1399,10 @@ ipcMain.handle('cookies:status', (_evt, payload) => {
 // ilegivel de "DLL load failed". Este handler quebra a cadeia em checagens
 // separadas pra o usuario ver exatamente qual elo faltou.
 // ---------------------------------------------------------------------------
+// Sem isto o Python emite na codepage do console (850/1252 no Windows PT-BR) e
+// os acentos da mensagem de erro chegam como lixo na tela do diagnostico.
+const PY_UTF8 = { PYTHONIOENCODING: 'utf-8' };
+
 function sdkLibName() {
   if (process.platform === 'win32')  return 'sapnwrfc.dll';
   if (process.platform === 'darwin') return 'libsapnwrfc.dylib';
@@ -1535,7 +1539,7 @@ ipcMain.handle('bridge:diagnose', (_evt, payload) => {
   // 2. Python: existe e e 64 bits? (o SDK e x86-64 only - Python x86 nem carrega)
   let pyOk = false;
   let r = spawnSync(python, ['-c', 'import sys,struct;print(sys.version.split()[0]);print(struct.calcsize("P")*8)'],
-                    { timeout: 20000, encoding: 'utf8' });
+                    { timeout: 20000, encoding: 'utf8', env: Object.assign({}, process.env, PY_UTF8) });
   if (r.error || r.status !== 0) {
     push('python', false, r.error ? String(r.error.message || r.error) : String(r.stderr || '').trim());
   } else {
@@ -1555,7 +1559,7 @@ ipcMain.handle('bridge:diagnose', (_evt, payload) => {
   // 4. pyrfc: so faz sentido se o Python respondeu. Roda com a lib do SDK no
   //    PATH, que e exatamente como o server MCP vai rodar.
   if (pyOk) {
-    const envPy = withSdkPath(settings, Object.assign({}, process.env));
+    const envPy = withSdkPath(settings, Object.assign({}, process.env, PY_UTF8));
     // ATENCAO: nao da pra confiar no exit code de `import pyrfc`. O __init__.py do
     // pyrfc envolve o import da extensao num try/except que faz `print(ex)` e
     // SEGUE -- entao com a sapnwrfc.dll faltando o import "da certo" (codigo 0) e
@@ -1636,7 +1640,7 @@ function runVspSearch(settings, projectPath, id, childEnv) {
 
 // Ambiente de processo pra rodar Python do bridge (RFC_* + lib do SDK no PATH).
 function bridgeChildEnv(settings, env) {
-  return withSdkPath(settings, Object.assign({}, process.env, bridgeEnvFor(settings, env)));
+  return withSdkPath(settings, Object.assign({}, process.env, bridgeEnvFor(settings, env), PY_UTF8));
 }
 
 ipcMain.handle('vsp:test', async (_evt, payload) => {
