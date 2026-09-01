@@ -237,6 +237,8 @@ function fillSettings() {
   $('set-vsp').value      = settings.vsp_path || '';
   $('set-arc1cmd').value  = settings.arc1_cmd || '';
   $('set-arc1args').value = settings.arc1_args || '';
+  // vazio de proposito: vazio = usa o node do PATH
+  $('set-node').value     = settings.node_path || '';
   $('set-chrome').value   = settings.chrome_path || '';
   $('set-vscode').value   = settings.vscode_cmd || 'code';
   // vazio de proposito: vazio = usa o Python que vem junto no app
@@ -250,6 +252,7 @@ function readSettingsFromForm() {
   // vazios de proposito: vazio = `npx -y arc-1@latest` (ver lib/engines/arc1.js)
   settings.arc1_cmd     = $('set-arc1cmd').value.trim();
   settings.arc1_args    = $('set-arc1args').value.trim();
+  settings.node_path    = $('set-node').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
   settings.python_path  = $('set-python').value.trim();
@@ -260,6 +263,93 @@ async function saveSettings() {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
   setStatus(t('msg.settingsSaved'), 'ok');
+  renderArc1Status(); // o override manual e o node podem ter mudado o runtime
+}
+
+// ---------------------------------------------------------------------------
+// ARC-1: instalacao gerenciada
+//
+// Sem ela o app cai em `npx -y arc-1@latest`, que custa 6-18s a CADA start do
+// server MCP e ainda troca a versao sozinho. Aqui o usuario ve o que vai rodar
+// de fato, fixa a versao e atualiza quando quiser.
+// ---------------------------------------------------------------------------
+let arc1Ultima = null; // ultima versao vista no registry (so apos clicar)
+
+async function renderArc1Status() {
+  const box = $('arc1-status');
+  if (!box) return;
+  const btnInst = $('btn-arc1-install');
+  let s;
+  try { s = await window.api.arc1Status({ settings }); } catch (e) { return; }
+  if (!s || !s.ok) { box.textContent = msgOf(s) || '—'; return; }
+
+  box.classList.remove('ok', 'warn');
+  let texto;
+  if (s.mode === 'manual') {
+    box.classList.add('warn');
+    texto = t('arc1.modeManual', s.command);
+  } else if (s.mode === 'local') {
+    box.classList.add('ok');
+    texto = t('arc1.modeLocal', s.active, s.node.version || '?');
+  } else {
+    box.classList.add('warn');
+    texto = s.node.ok
+      ? t('arc1.modeNpx', s.node.version || '?')
+      : t(s.node.motivo === 'tooOld' ? 'arc1.nodeOld' : 'arc1.noNode', s.node.version || '—', s.node.minimo);
+  }
+  if (arc1Ultima && s.active && arc1Ultima !== s.active) texto += ' · ' + t('arc1.updateAvail', arc1Ultima);
+  box.textContent = texto;
+
+  // Sem node compativel nao ha o que instalar — o fallback npx segue valendo.
+  btnInst.disabled = !s.node.ok;
+  btnInst.textContent = s.active
+    ? t('settings.arc1.update', arc1Ultima && arc1Ultima !== s.active ? arc1Ultima : t('arc1.latest'))
+    : t('settings.arc1.install');
+}
+
+async function doArc1CheckLatest(btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('settings.arc1.checking'); }
+  const r = await window.api.arc1CheckLatest();
+  if (btn) { btn.disabled = false; btn.textContent = label || t('settings.arc1.check'); }
+  if (!r.ok) { setStatus('✗ ' + msgOf(r), 'err'); return; }
+  arc1Ultima = r.version;
+  const s = await window.api.arc1Status({ settings });
+  const igual = s.ok && s.active === r.version;
+  setStatus(igual ? '✓ ' + t('msg.arc1UpToDate', r.version) : '✓ ' + t('msg.arc1NewVersion', r.version),
+    igual ? 'ok' : 'warn');
+  renderArc1Status();
+}
+
+async function doArc1Install(btn) {
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('settings.arc1.installing'); }
+  setStatus(t('msg.arc1Installing'));
+
+  const res = await window.api.arc1Install({ settings, version: arc1Ultima || null });
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  if (res.log) lastLog = res.log;
+  if (!res.ok) { setStatus('✗ ' + msgOf(res), 'err'); renderArc1Status(); return; }
+
+  // A versao entra no CAMINHO do comando, entao as configs ja gravadas apontam
+  // pra versao antiga. Regera so se houver conexao ARC-1 registrada — senao
+  // seria uma varredura a toa.
+  const precisam = (clients.environments || [])
+    .filter(e => engineIdOf(e) === 'arc1' && globalProfiles.has(profileId(e)));
+  let extra = '';
+  if (precisam.length) {
+    const rs = await window.api.resyncAll({ settings, envs: (clients.environments || []).map(withFolder) });
+    extra = rs.ok
+      ? ' — ' + t('msg.arc1Resynced', precisam.length) + ' ' + t('msg.engineRestart')
+      : ' — ' + msgOf(rs);
+  }
+  setStatus('✓ ' + msgOf(res) + extra, 'ok');
+  arc1Ultima = res.version;
+  renderArc1Status();
+  await refreshMcpStatus();
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +361,9 @@ function switchView(name) {
   });
   $('view-conns').classList.toggle('hidden', name !== 'conns');
   $('view-settings').classList.toggle('hidden', name !== 'settings');
+  // o estado do ARC-1 muda por fora do app (instalacao, node novo no PATH):
+  // reconsulta ao abrir a tela em vez de confiar no que foi lido no boot
+  if (name === 'settings') renderArc1Status();
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,6 +1505,9 @@ async function pick(kind) {
   } else if (kind === 'python') {
     const p = await window.api.pickFile({ title: t('pick.python'), filters: exeFilters });
     if (p) $('set-python').value = p;
+  } else if (kind === 'node') {
+    const p = await window.api.pickFile({ title: t('pick.node'), filters: exeFilters });
+    if (p) $('set-node').value = p;
   } else if (kind === 'nwrfclib') {
     const p = await window.api.pickFolder({ title: t('pick.nwrfc') });
     if (p) $('set-nwrfc').value = p;
@@ -1445,6 +1541,13 @@ function bind() {
   $('btn-save-settings').onclick = saveSettings;
   $('btn-diagnose').onclick = function () { doDiagnose(this); };
   $('btn-resync').onclick = function () { doResyncAll(this); };
+  $('btn-arc1-install').onclick = function () { doArc1Install(this); };
+  $('btn-arc1-check').onclick   = function () { doArc1CheckLatest(this); };
+  // o npm baixa ~83 MB: sem eco, o botao ficaria mudo por um minuto
+  window.api.onArc1Progress((linha) => {
+    const l = String(linha || '').trim().split('\n').pop();
+    if (l) setStatus(t('settings.arc1.installing') + ' — ' + l.slice(0, 120));
+  });
   // trocar o engine padrao muda o que as conexoes que HERDAM vao usar: o
   // detalhe precisa refletir isso na hora, mesmo antes de salvar
   $('set-engine').onchange = () => {
@@ -1573,6 +1676,7 @@ async function init() {
   } catch (e) { engineDefs = []; }
   window.i18n.setLang(settings.lang || 'en'); // ingles por padrao
   fillSettings();
+  renderArc1Status(); // sem await: nao segura o boot se o node demorar a responder
   render();
   await refreshCookieStatus();
   await refreshMcpStatus();

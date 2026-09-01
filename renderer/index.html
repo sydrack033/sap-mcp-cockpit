@@ -106,17 +106,38 @@
               </div>
             </div>
 
-            <div class="grid2">
-              <div class="field">
-                <label data-i18n="settings.arc1cmd">ARC-1 command</label>
-                <input id="set-arc1cmd" type="text" placeholder="npx" />
+            <div class="field">
+              <label data-i18n="settings.arc1.title">ARC-1 runtime</label>
+              <div id="arc1-status" class="runtime-status"></div>
+              <div class="row">
+                <button id="btn-arc1-install" class="btn btn-sm" data-i18n="settings.arc1.install">Install ARC-1</button>
+                <button id="btn-arc1-check" class="btn btn-sm" data-i18n="settings.arc1.check"
+                  data-i18n-title="settings.arc1.check.title">Check for update</button>
               </div>
-              <div class="field">
-                <label data-i18n="settings.arc1args">ARC-1 arguments</label>
-                <input id="set-arc1args" type="text" placeholder="-y arc-1@latest" />
-              </div>
+              <p class="hint" data-i18n-html="settings.arc1.hint">ARC-1 is an npm package, not a single binary. Installing it here pins the version and cuts server start from <b>6–18 s</b> to <b>~3 s</b>; without it the app falls back to <code>npx</code>, which re-resolves the package on every start.</p>
             </div>
-            <p class="hint" data-i18n-html="settings.arc1.hint">ARC-1 is an npm package, not a single binary. Leave both empty to use <code>npx -y arc-1@latest</code>.</p>
+
+            <details class="adv">
+              <summary data-i18n="settings.arc1.adv">Advanced: run a different command</summary>
+              <div class="grid2">
+                <div class="field">
+                  <label data-i18n="settings.arc1cmd">ARC-1 command</label>
+                  <input id="set-arc1cmd" type="text" placeholder="npx" />
+                </div>
+                <div class="field">
+                  <label data-i18n="settings.arc1args">ARC-1 arguments</label>
+                  <input id="set-arc1args" type="text" placeholder="-y arc-1@latest" />
+                </div>
+              </div>
+              <div class="field">
+                <label data-i18n="settings.node">Node path (ARC-1 needs 22.19+)</label>
+                <div class="row">
+                  <input id="set-node" type="text" placeholder="node" />
+                  <button class="btn btn-sm" data-pick="node" data-i18n="browse">Browse…</button>
+                </div>
+              </div>
+              <p class="hint" data-i18n-html="settings.arc1.advhint">Filling in the command <b>overrides</b> the managed install. Leave empty unless you have a reason.</p>
+            </details>
             <p class="hint" data-i18n-html="settings.folders.hint">The workspace folder is set <b>per client</b>, in the sidebar — there is no single project folder anymore.</p>
             <div class="grid2">
               <div class="field">

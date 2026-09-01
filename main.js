@@ -17,6 +17,7 @@ const {
   folderOfEnv, bridgePortOf
 } = require('./lib/common');
 const engines = require('./lib/engines');
+const arc1install = require('./lib/arc1install');
 
 // ---------------------------------------------------------------------------
 // Persistencia dos dados do app (settings + clientes) no perfil do usuario.
@@ -58,9 +59,13 @@ const DEFAULT_SETTINGS = {
   // Engine padrao das conexoes que nao escolhem um (campo `engine` vazio).
   // 'vsp' mantem o comportamento de quem ja usava o app antes do seletor.
   default_engine: 'vsp',
-  // ARC-1: pacote npm, nao binario. Vazio = `npx -y arc-1@latest`.
+  // ARC-1: pacote npm, nao binario. Vazios = o app decide (instalacao
+  // gerenciada no userData se houver, senao `npx -y arc-1@latest`).
+  // Preencher aqui e override manual e vence tudo -- ver lib/arc1install.
   arc1_cmd: '',
-  arc1_args: ''
+  arc1_args: '',
+  // Node usado pra rodar o ARC-1 instalado (>=22.19). Vazio = o do PATH.
+  node_path: ''
 };
 
 // ---------------------------------------------------------------------------
@@ -521,6 +526,46 @@ ipcMain.handle('configs:globalStatus', () => {
 // Descricao dos engines disponiveis (id, label, caps) pro renderer montar o
 // seletor e adaptar o formulario. O renderer nao consegue require em lib/.
 ipcMain.handle('engines:list', () => ({ ok: true, engines: engines.describe() }));
+
+// ---------------------------------------------------------------------------
+// Instalacao gerenciada do ARC-1 (ver lib/arc1install.js pro porque).
+// ---------------------------------------------------------------------------
+
+// Estado atual. NAO toca na rede: e chamado toda vez que a tela de
+// Configuracoes abre, e um app que guarda credencial de cliente nao pode sair
+// falando com a internet sozinho.
+ipcMain.handle('arc1:status', (_evt, payload) => {
+  try {
+    return Object.assign({ ok: true }, arc1install.status((payload && payload.settings) || {}));
+  } catch (e) {
+    return { ok: false, key: 'be.genError', args: [e.message] };
+  }
+});
+
+// Consulta o registry npm. So por acao explicita do usuario.
+ipcMain.handle('arc1:checkLatest', async () => {
+  try { return await arc1install.ultimaVersao(15000); }
+  catch (e) { return { ok: false, key: 'be.arc1RegistryFail', args: [e.message] }; }
+});
+
+// Instala (ou atualiza para) uma versao e a torna ativa. Sao ~83 MB, entao o
+// progresso do npm vai pro renderer em vez de deixar o botao mudo.
+ipcMain.handle('arc1:install', async (_evt, payload) => {
+  try {
+    const { settings, version } = payload || {};
+    const res = await arc1install.instalar(settings || {}, version || null, (linha) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try { mainWindow.webContents.send('arc1:progress', linha); } catch (e) {}
+      }
+    });
+    // Trocar a versao muda o CAMINHO no comando do server: as configs ja
+    // gravadas apontam pra versao antiga. Quem regrava e a varredura, mas quem
+    // decide e o renderer (ele sabe quais conexoes usam ARC-1).
+    return res;
+  } catch (e) {
+    return { ok: false, key: 'be.arc1InstallFail', args: [e.message] };
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Varredura: re-sincroniza TODAS as conexoes ja registradas no escopo global.
@@ -1042,12 +1087,21 @@ app.on('window-all-closed', () => {
 // ---------------------------------------------------------------------------
 // IPC handlers
 // ---------------------------------------------------------------------------
+// `arc1_home` e DERIVADO, nao configuracao: entra na carga pra todo mundo que
+// receber `settings` saber onde mora a instalacao gerenciada (o lib/arc1install
+// nao pode chamar app.getPath -- ele tambem roda fora do Electron, nos testes).
+// Sai de novo na gravacao, pra nao virar um caminho fixo no settings.json que
+// ficaria errado se o userData mudar de lugar.
 ipcMain.handle('settings:load', () => {
-  return Object.assign({}, DEFAULT_SETTINGS, readJson(SETTINGS_FILE, {}));
+  return Object.assign({}, DEFAULT_SETTINGS, readJson(SETTINGS_FILE, {}), {
+    arc1_home: path.join(DATA_DIR, 'engines', 'arc1')
+  });
 });
 
 ipcMain.handle('settings:save', (_evt, settings) => {
-  writeJson(SETTINGS_FILE, settings);
+  const limpo = Object.assign({}, settings);
+  delete limpo.arc1_home;
+  writeJson(SETTINGS_FILE, limpo);
   return { ok: true };
 });
 
