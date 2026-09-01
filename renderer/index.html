@@ -89,12 +89,34 @@
           </div>
           <div class="panel-body">
             <div class="field">
+              <label data-i18n="settings.engine">Default engine</label>
+              <div class="row">
+                <select id="set-engine"></select>
+                <button id="btn-resync" class="btn btn-sm" data-i18n="settings.resync"
+                  data-i18n-title="settings.resync.title">Re-sync configs</button>
+              </div>
+              <p class="hint" data-i18n-html="settings.engine.hint">Engine used by connections that don't pick one. Changing it only affects what gets generated <b>from now on</b> — use <b>Re-sync configs</b> to rewrite the ones already registered.</p>
+            </div>
+
+            <div class="field">
               <label data-i18n="settings.vsp">Path to vsp.exe</label>
               <div class="row">
                 <input id="set-vsp" type="text" placeholder="C:/.../tools/vsp.exe" />
                 <button class="btn btn-sm" data-pick="vsp" data-i18n="browse">Browse…</button>
               </div>
             </div>
+
+            <div class="grid2">
+              <div class="field">
+                <label data-i18n="settings.arc1cmd">ARC-1 command</label>
+                <input id="set-arc1cmd" type="text" placeholder="npx" />
+              </div>
+              <div class="field">
+                <label data-i18n="settings.arc1args">ARC-1 arguments</label>
+                <input id="set-arc1args" type="text" placeholder="-y arc-1@latest" />
+              </div>
+            </div>
+            <p class="hint" data-i18n-html="settings.arc1.hint">ARC-1 is an npm package, not a single binary. Leave both empty to use <code>npx -y arc-1@latest</code>.</p>
             <p class="hint" data-i18n-html="settings.folders.hint">The workspace folder is set <b>per client</b>, in the sidebar — there is no single project folder anymore.</p>
             <div class="grid2">
               <div class="field">
@@ -211,6 +233,13 @@
               <span data-i18n="auth.rfc">SAProuter (RFC)</span>
             </label>
           </div>
+        </div>
+
+        <div class="field">
+          <label data-i18n="f.engine">Engine (MCP server)</label>
+          <!-- opcoes montadas em JS: quem manda a lista de engines e o main -->
+          <div class="seg" id="f-engine-seg"></div>
+          <p class="hint" id="f-engine-hint" data-i18n="f.engine.hint">Which ADT client serves this connection over MCP.</p>
         </div>
 
         <div class="grid2">

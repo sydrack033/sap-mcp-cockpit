@@ -54,7 +54,13 @@ const DEFAULT_SETTINGS = {
   python_path: '',
   nwrfc_lib: '',
   // Claude Code nao tem comando aqui: e o app desktop, aberto por claude://
-  lang: 'en' // idioma da UI: 'en' (padrao) ou 'pt'
+  lang: 'en', // idioma da UI: 'en' (padrao) ou 'pt'
+  // Engine padrao das conexoes que nao escolhem um (campo `engine` vazio).
+  // 'vsp' mantem o comportamento de quem ja usava o app antes do seletor.
+  default_engine: 'vsp',
+  // ARC-1: pacote npm, nao binario. Vazio = `npx -y arc-1@latest`.
+  arc1_cmd: '',
+  arc1_args: ''
 };
 
 // ---------------------------------------------------------------------------
@@ -501,7 +507,96 @@ function cleanProjectScope(dir, ids) {
 ipcMain.handle('configs:globalStatus', () => {
   const r = readClaudeGlobal();
   if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL], profiles: [] };
-  return { ok: true, file: CLAUDE_GLOBAL, profiles: Object.keys(r.json.mcpServers || {}) };
+  const servers = r.json.mcpServers || {};
+  // Alem da lista, QUAL engine gerou cada entrada. E o que deixa a UI avisar que
+  // a conexao mudou de engine mas a config registrada ainda e a antiga.
+  const engineOfProfile = {};
+  for (const [id, entry] of Object.entries(servers)) {
+    const eng = engines.engineOfEntry(entry);
+    if (eng) engineOfProfile[id] = eng.id;
+  }
+  return { ok: true, file: CLAUDE_GLOBAL, profiles: Object.keys(servers), engines: engineOfProfile };
+});
+
+// Descricao dos engines disponiveis (id, label, caps) pro renderer montar o
+// seletor e adaptar o formulario. O renderer nao consegue require em lib/.
+ipcMain.handle('engines:list', () => ({ ok: true, engines: engines.describe() }));
+
+// ---------------------------------------------------------------------------
+// Varredura: re-sincroniza TODAS as conexoes ja registradas no escopo global.
+//
+// Existe por causa da troca de engine: mudar o engine (na conexao ou no padrao
+// do app) so muda o que o Cockpit VAI gerar -- o ~/.claude.json continua com o
+// comando antigo ate alguem regravar. Sem isto, o usuario teria que abrir uma a
+// uma e clicar "Habilitar MCP" de novo.
+//
+// So mexe em quem JA estava registrado: nao habilita conexao nova por conta
+// propria. `envs` deve trazer TODAS as conexoes (com `folder`), porque os
+// arquivos de apoio sao da PASTA e listam todas as que dividem ela.
+// ---------------------------------------------------------------------------
+ipcMain.handle('configs:resyncAll', (_evt, payload) => {
+  try {
+    const { settings, envs } = payload || {};
+    const todas = envs || [];
+    const r = readClaudeGlobal();
+    if (r.error) return { ok: false, key: 'be.globalBadJson', args: [CLAUDE_GLOBAL] };
+
+    const json = r.json;
+    const servers = json.mcpServers || {};
+    const alvo = todas.filter(e => Object.prototype.hasOwnProperty.call(servers, envIdOf(e)));
+    if (!alvo.length) return { ok: false, key: 'be.resyncNone' };
+
+    // Cloud sem pasta nao tem onde procurar o cookie: sai da varredura em vez de
+    // gravar uma entrada que nao conecta.
+    const semPasta = alvo.filter(e => e.auth_type === 'cloud' && !e.folder).map(envIdOf);
+    const podem = alvo.filter(e => !(e.auth_type === 'cloud' && !e.folder));
+    if (!podem.length) return { ok: false, key: 'be.resyncNoFolder', args: [semPasta.join(', ')] };
+
+    // Antes de sobrescrever: quem TROCA de engine. E o que interessa reportar.
+    const trocaram = [];
+    for (const e of podem) {
+      const id = envIdOf(e);
+      const antes = engines.engineOfEntry(servers[id]);
+      const agora = engines.engineOf(settings, e);
+      if (antes && antes.id !== agora.id) trocaram.push({ id, from: antes.label, to: agora.label });
+    }
+
+    json.mcpServers = servers;
+    for (const e of podem) servers[envIdOf(e)] = buildMcpServerEntry(settings, e, e.folder);
+    writeClaudeGlobal(json, r.raw);
+
+    // Arquivos de apoio, uma vez por PASTA e com TODAS as conexoes dela (mesmo
+    // as nao registradas): gravar so as do alvo apagaria as outras do .vsp.json.
+    const pastas = [...new Set(podem.map(e => e.folder).filter(Boolean))];
+    for (const dir of pastas) {
+      const daPasta = todas.filter(x => x.folder === dir);
+      generateWorkspace(settings, dir, daPasta);
+      cleanProjectScope(dir, daPasta.map(envIdOf));
+    }
+
+    // Codex le MCP so do config global dele: acompanha na mesma varredura.
+    let codexFile = null;
+    try { codexFile = mergeCodexGlobalConfig(settings, podem); } catch (e) { /* segue */ }
+
+    // Uma vez so, no fim: o processo velho de QUALQUER engine segura a config
+    // antiga em memoria, e o bridge antigo segura a porta com o ashost velho.
+    const mortos = engines.killAll(settings);
+    const bridge = killBridgeProcesses();
+
+    return {
+      ok: true,
+      key: 'be.resyncOk',
+      args: [podem.length],
+      count: podem.length,
+      switched: trocaram,
+      skipped: semPasta,
+      codexFile,
+      vspKilled: mortos.killed,
+      bridgeKilled: bridge.killed
+    };
+  } catch (e) {
+    return { ok: false, key: 'be.genError', args: [e.message] };
+  }
 });
 
 // Habilitar MCP: registra a conexao no escopo global e, se ela tem pasta,
@@ -789,7 +884,11 @@ function generateWorkspace(settings, folder, envs) {
   ];
   for (const e of envs) {
     if (e.auth_type !== 'cloud' && e.password) {
-      const vars = engines.engineOf(settings, e).passwordVars(envIdOf(e));
+      // dotenvVars, nao passwordVars: um engine pode ler a senha de uma variavel
+      // SEM o nome do profile (o ARC-1 le SAP_PASSWORD), e ai gravar no .env da
+      // pasta faria a segunda conexao herdar a senha da primeira. Nesses casos o
+      // engine devolve [] e a senha fica so no bloco `env` do server MCP.
+      const vars = engines.engineOf(settings, e).dotenvVars(envIdOf(e));
       for (const v of vars) envLines.push(`${v}=${e.password}`);
     }
   }
