@@ -947,15 +947,16 @@ function ensureFile(file, content) {
 // E lido pelo agente em toda sessao nova, entao cada linha custa token: so entra
 // aqui o que muda o comportamento dele.
 // ---------------------------------------------------------------------------
-function protocoloChamados() {
+function protocoloChamados(nomeCliente) {
   return [
     '## Protocolo de trabalho — leia antes de agir',
     '',
-    'Este workspace e de **um cliente**, e todo trabalho aqui pertence a uma',
-    '**frente**: normalmente um chamado (`DEL-R2R-018`, `GAP269`), mas pode ser uma',
-    'request de transporte (`S4DK900689`), uma EF, ou outro identificador. O que',
-    'importa e existir uma **chave estavel** que una as sessoes sobre o mesmo',
-    'assunto. Cada frente tem sua pasta em `chamados/<chave>/`.',
+    'Este workspace e do cliente **' + nomeCliente + '**. Todo trabalho aqui',
+    'pertence a uma **frente**: normalmente um chamado (`DEL-R2R-018`,',
+    '`GAP269`), mas pode ser uma request de transporte (`S4DK900689`), uma EF,',
+    'ou outro identificador. O que importa e existir uma **chave estavel** que',
+    'una as sessoes sobre o mesmo assunto. Cada frente tem sua pasta em',
+    '`chamados/<chave>/`.',
     '',
     'Um chat cobre **um cliente**, nao uma frente: a mesma conversa pode passar por',
     'varias frentes em sequencia. Ao trocar de frente no meio do chat, **atualize o',
@@ -1033,6 +1034,18 @@ function protocoloChamados() {
     '  a marca nao custa leitura extra.',
     '',
     'Subpasta com codigo de projeto nao e contexto e fica onde esta.',
+    '',
+    '## Nome da conversa',
+    '',
+    'O app agrupa as conversas pelo nome do **repositorio git**, entao clientes que',
+    'dividem um repositorio caem todos no mesmo grupo da barra lateral. Quem diz de',
+    'quem e a conversa, ai, e o titulo dela.',
+    '',
+    'Assim que souber a frente, renomeie a sessao para',
+    '`[' + nomeCliente + '] <chave> — <resumo curto>` — por exemplo',
+    '`[' + nomeCliente + '] DEL-R2R-018 — Interface de Contas a Receber`.',
+    'Use a ferramenta de renomear sessao se esta sessao tiver uma; nao havendo,',
+    'ignore este bloco.',
     '',
     '## Skills: olhe a lista antes de escrever',
     '',
@@ -1194,10 +1207,13 @@ function generateWorkspace(settings, folder, envs) {
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
   // Um bloco por engine presente na pasta: as instrucoes sao cheias de
   // particularidade do cliente ADT, entao nao da pra ter um texto so.
+  const nomeCliente = (envs.find(e => e.client_name) || {}).client_name
+    || path.basename(folder);
+
   // O protocolo de trabalho fecha o arquivo, depois dos blocos de engine: ele e
   // do WORKSPACE (chamado, HANDOFF) e nao do cliente ADT, entao entra uma vez so.
   const instructions = grupos.map(g => g.engine.instructions(g.envs))
-    .concat([protocoloChamados()])
+    .concat([protocoloChamados(nomeCliente)])
     .join('\n---\n\n');
   writeIfChanged(path.join(folder, 'CLAUDE.md'), instructions);
   writeIfChanged(path.join(folder, 'AGENTS.md'), instructions);
@@ -1206,8 +1222,6 @@ function generateWorkspace(settings, folder, envs) {
   // Sem eles nao ha onde guardar conhecimento que sobreviva a regeracao, e o
   // usuario acaba editando o CLAUDE.md — que e apagado sem aviso. docs/ e do
   // cliente, chamados/ e do chamado: um dono por pasta, sem sobreposicao.
-  const nomeCliente = (envs.find(e => e.client_name) || {}).client_name
-    || path.basename(folder);
   ensureFile(path.join(folder, 'docs', 'README.md'), docsReadmeSeed(nomeCliente));
   ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
 
