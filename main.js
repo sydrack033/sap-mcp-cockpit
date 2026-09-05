@@ -990,9 +990,7 @@ function protocoloChamados() {
     'Escreva num arquivo de `docs/` e cite no indice `docs/README.md`. Na duvida,',
     'pergunte em vez de escolher sozinho.',
     '',
-    'O inverso fica no **HANDOFF do chamado**: numero de request, valor de teste,',
-    'erro de uma execucao, o que falta fazer. `docs/` e lido em toda sessao, entao so',
-    'entra o que e duravel e transversal.',
+    'Nao disparou nenhum? E do chamado: vai no HANDOFF.',
     '',
     '**Cliente novo (indice vazio):** voce nao tem baseline, entao o sinal 3 vale',
     'quase sempre — tudo que precisar perguntar sobre ambiente, padrao ou processo e',
@@ -1002,26 +1000,12 @@ function protocoloChamados() {
     '',
     '## Workspace ainda nao organizado',
     '',
-    'Este workspace pode ser anterior a esta estrutura: a pasta `chamados/` nasce',
-    'vazia, mas o contexto de trabalho ja existente fica onde sempre esteve. Ignorar',
-    'isso e pior que nao ter nada — o material existe e some de vista.',
-    '',
-    'Na primeira sessao, se `chamados/` so tem o `_TEMPLATE.md`, gaste UM `ls` na',
-    'raiz e em `docs/`:',
-    '',
-    '- `.md` soltos na raiz (fora `CLAUDE.md` e `AGENTS.md`) sao contexto de trabalho',
-    '  anterior. A chave da frente costuma estar no proprio nome do arquivo',
-    '  (`GAP276-defeito-preco.md` → frente `GAP276`).',
-    '- Arquivos em `docs/` que o indice `docs/README.md` nao cita: ou entram no',
-    '  indice, ou sao de uma frente e vao para `chamados/<chave>/`.',
-    '',
-    '**Liste o que achou, proponha o mapeamento e peca o aval antes de mover',
-    'qualquer coisa.** Nao adivinhe: dois arquivos com o mesmo numero podem ser a',
-    'mesma frente ou duas, e so o usuario sabe. Nem toda pasta e contexto — subpasta',
-    'com codigo de projeto fica onde esta.',
-    '',
-    'Feito uma vez, `chamados/` deixa de estar vazio e esta verificacao para de',
-    'disparar sozinha.',
+    'Se `chamados/` so tem o `_TEMPLATE.md`, gaste UM `ls` na raiz e em `docs/`:',
+    '`.md` solto na raiz e contexto de trabalho anterior, e a chave da frente',
+    'costuma estar no nome (`GAP276-defeito-preco.md` → frente `GAP276`). **Liste,',
+    'proponha o mapeamento e peca o aval antes de mover** — dois arquivos com o',
+    'mesmo numero podem ser uma frente ou duas, e so o usuario sabe. Subpasta com',
+    'codigo de projeto nao e contexto.',
     '',
     '## Antes de criar QUALQUER objeto',
     '',
@@ -1337,8 +1321,45 @@ ipcMain.handle('update:install', () => {
   return { ok: true };
 });
 
+// Regera os arquivos de apoio de todo workspace ja configurado, ao abrir o app.
+//
+// Sem isto a estrutura nova so chega quando o usuario mexe no Cockpit — e quem ja
+// tem tudo configurado nao mexe. O app se atualiza sozinho (electron-updater), o
+// usuario abre um chat na pasta do cliente e le o CLAUDE.md da versao ANTIGA: sem
+// protocolo, sem docs/, sem chamados/. E o agente nao pode se salvar, porque a
+// instrucao que mandaria criar a estrutura esta justamente no arquivo que nao foi
+// regerado.
+//
+// Roda quieto: writeIfChanged nao toca em arquivo identico e ensureFile so cria o
+// que falta, entao na maioria das aberturas isto e um punhado de leituras e nada
+// mais. Falha de um workspace (pasta em rede fora do ar, permissao) nao pode
+// impedir o app de abrir.
+function healWorkspaces() {
+  try {
+    const settings = settingsAtuais();
+    const clients = readJson(CLIENTS_FILE, { environments: [] });
+    const envs = (clients.environments || []).map(e => {
+      const dir = (clients.folders || {})[e.client_name];
+      return dir ? Object.assign({}, e, { folder: dir }) : null;
+    }).filter(Boolean);
+
+    const pastas = [...new Set(envs.map(e => e.folder))];
+    for (const dir of pastas) {
+      try {
+        if (!fs.existsSync(dir)) continue;  // pasta sumiu: nao recria do nada
+        generateWorkspace(settings, dir, envs.filter(e => e.folder === dir));
+      } catch (e) {
+        console.error('healWorkspaces:', dir, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('healWorkspaces:', e.message);
+  }
+}
+
 app.whenReady().then(() => {
   ensureBridgeFiles(); // scripts do bridge RFC no userData (Python nao le de dentro do asar)
+  healWorkspaces();
   createWindow();
   initAutoUpdate();
   app.on('activate', () => {
@@ -1358,11 +1379,15 @@ app.on('window-all-closed', () => {
 // nao pode chamar app.getPath -- ele tambem roda fora do Electron, nos testes).
 // Sai de novo na gravacao, pra nao virar um caminho fixo no settings.json que
 // ficaria errado se o userData mudar de lugar.
-ipcMain.handle('settings:load', () => {
+// Extraida do handler porque o healWorkspaces precisa das settings no boot, antes
+// de existir janela pra pedir por IPC.
+function settingsAtuais() {
   return Object.assign({}, DEFAULT_SETTINGS, readJson(SETTINGS_FILE, {}), {
     arc1_home: path.join(DATA_DIR, 'engines', 'arc1')
   });
-});
+}
+
+ipcMain.handle('settings:load', () => settingsAtuais());
 
 ipcMain.handle('settings:save', (_evt, settings) => {
   const limpo = Object.assign({}, settings);
