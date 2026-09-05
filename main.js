@@ -926,7 +926,7 @@ function writeIfChanged(file, content) {
 }
 
 // Semente: cria so se nao existir. E o contrato dos arquivos que sao do USUARIO
-// (CLIENTE.md, chamados/_TEMPLATE.md) -- o Cockpit da o ponto de partida e nunca
+// (docs/README.md, chamados/_TEMPLATE.md) -- o Cockpit da o ponto de partida e
 // mais encosta. Sem isto nao ha onde guardar conhecimento do cliente que
 // sobreviva a regeracao, e o usuario acaba editando o CLAUDE.md, que e apagado.
 function ensureFile(file, content) {
@@ -959,36 +959,55 @@ function protocoloChamados() {
     '2. **Leia `chamados/<ID>/HANDOFF.md` antes de qualquer outra coisa.** Ele diz o',
     '   ambiente, o que ja esta no sistema, as decisoes tomadas e o proximo passo.',
     '   Nao existe? Crie a partir de `chamados/_TEMPLATE.md`.',
-    '3. **Leia `CLIENTE.md`** (na raiz), se existir: e o que vale para todos os',
-    '   chamados deste cliente e nao cabe neste arquivo gerado.',
-    '4. **Atualize o HANDOFF ao fim de cada bloco de trabalho.** E a unica coisa que',
-    '   sobrevive ao fim do chat — a proxima sessao comeca por ele.',
+    '3. **Leia `docs/README.md`** — indice do que vale para TODOS os chamados deste',
+    '   cliente (padroes, integracao, processo, armadilhas). Abra de `docs/` so os',
+    '   arquivos que o assunto pedir; nao leia a pasta inteira. Indice vazio e o',
+    '   normal de cliente novo, nao erro: va preenchendo conforme aprender.',
+    '4. **Ao fim de cada bloco, registre o que aprendeu no lugar certo:**',
+    '   - vale **so para este chamado** (estado, decisao, proximo passo) →',
+    '     `chamados/<ID>/HANDOFF.md`',
+    '   - vale para **qualquer chamado deste cliente** (padrao, armadilha do',
+    '     ambiente, autorizacao que sempre falta, quem decide o que) → um arquivo em',
+    '     `docs/`, citado no indice `docs/README.md`',
+    '   - na duvida, pergunte em vez de escolher sozinho',
+    '',
+    'O conhecimento do cliente sempre nasce dentro de um chamado. Sem rotear, ele',
+    'morre no HANDOFF daquele chamado e o proximo redescobre do zero. Mas `docs/` e',
+    'lido em toda sessao: so entra o que e **duravel e transversal** — erro de uma',
+    'execucao, valor de teste e conversa de ontem sao HANDOFF, nao `docs/`.',
     '',
     '| Arquivo | Dono |',
     '|---|---|',
     '| `CLAUDE.md`, `AGENTS.md` | Cockpit. **Nao edite**: sao sobrescritos sem aviso |',
-    '| `CLIENTE.md` | voce/usuario. O Cockpit semeia uma vez e nunca sobrescreve |',
-    '| `docs/` | conhecimento atemporal do cliente (padroes, integracao, processo) |',
+    '| `docs/` | conhecimento do cliente. O Cockpit semeia o README e nunca sobrescreve |',
     '| `chamados/<ID>/HANDOFF.md` | estado de um chamado |',
     '| `.env`, `.vsp.json`, `cookies*.txt` | segredo. Nunca leia, nunca versione |',
     '',
-    'Vasculhar a pasta gasta token a toa: fique em `CLIENTE.md`, `docs/` e',
-    '`chamados/<ID>/`. Nao rode `glob`/`ls` recursivo na raiz.',
+    'Vasculhar a pasta gasta token a toa: fique em `docs/` e `chamados/<ID>/`. Nao',
+    'rode `glob`/`ls` recursivo na raiz.',
     ''
   ].join('\n');
 }
 
-// Semente do CLIENTE.md: so os cabecalhos, para o usuario preencher. Vazio de
-// proposito -- texto de exemplo tende a ficar la para sempre e virar ruido que o
-// agente le em toda sessao.
-function clienteSeed(nome) {
+// Semente do docs/README.md: o indice do conhecimento do cliente.
+//
+// As secoes vem nomeadas e vazias de proposito. "Escreva em docs/" sozinho e vago
+// demais -- com as secoes prontas, quem descobre uma armadilha do ambiente sabe
+// onde encaixar. Sem texto de exemplo: exemplo tende a ficar la para sempre e
+// virar ruido que o agente le em toda sessao.
+function docsReadmeSeed(nome) {
   return [
-    '# ' + nome,
+    '# ' + nome + ' — conhecimento do cliente',
     '',
-    'O que vale para **todos** os chamados deste cliente.',
+    'O que vale para **todos** os chamados deste cliente. O estado de cada chamado',
+    'fica em `chamados/<ID>/HANDOFF.md`, nao aqui.',
     '',
-    'Este arquivo e seu: o Cockpit cria uma vez e nunca mais encosta. O `CLAUDE.md`',
-    'ao lado e gerado e sobrescrito sem aviso — nao escreva nada la.',
+    'Esta pasta e sua: o Cockpit semeia este README uma vez e nunca mais encosta. O',
+    '`CLAUDE.md` da raiz e gerado e sobrescrito sem aviso — nao escreva nada la.',
+    '',
+    '| Arquivo | Do que trata |',
+    '|---|---|',
+    '| | |',
     '',
     '## Sistema e acesso',
     '',
@@ -1090,11 +1109,12 @@ function generateWorkspace(settings, folder, envs) {
   writeIfChanged(path.join(folder, 'AGENTS.md'), instructions);
 
   // ---- arquivos do USUARIO: semeados uma vez, nunca sobrescritos ----
-  // Sem eles nao ha onde guardar conhecimento do cliente que sobreviva a
-  // regeracao, e o usuario acaba editando o CLAUDE.md — que e apagado sem aviso.
+  // Sem eles nao ha onde guardar conhecimento que sobreviva a regeracao, e o
+  // usuario acaba editando o CLAUDE.md — que e apagado sem aviso. docs/ e do
+  // cliente, chamados/ e do chamado: um dono por pasta, sem sobreposicao.
   const nomeCliente = (envs.find(e => e.client_name) || {}).client_name
     || path.basename(folder);
-  ensureFile(path.join(folder, 'CLIENTE.md'), clienteSeed(nomeCliente));
+  ensureFile(path.join(folder, 'docs', 'README.md'), docsReadmeSeed(nomeCliente));
   ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
 
   // ---- .env (senhas on-premise) ----
@@ -1122,14 +1142,14 @@ function generateWorkspace(settings, folder, envs) {
     '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt',
     '',
     '# Gerados pelo Cockpit: deterministicos, a outra maquina reconstroi ao ligar',
-    '# o MCP. O que e SEU vai no CLIENTE.md, que nunca e sobrescrito.',
+    '# o MCP. O que e SEU vai em docs/, que nunca e sobrescrito.',
     'CLAUDE.md', 'AGENTS.md', ''
   ].join('\n'));
 
   return {
     ok: true,
     files: engineFiles.concat(['.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md',
-      'CLIENTE.md']),
+      'docs/README.md']),
     count: envs.length
   };
 }
