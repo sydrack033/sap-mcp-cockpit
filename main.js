@@ -909,6 +909,148 @@ ipcMain.handle('sap:landscape', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Escrita idempotente dos arquivos do workspace.
+//
+// generateWorkspace roda em TODA ligada de MCP, troca de engine e varredura --
+// nao e um botao que o usuario aperta sabendo o que faz. Reescrever conteudo
+// identico so mexeria no mtime de arquivo em pasta versionada e produziria
+// "modificado" no git sem ninguem ter editado nada.
+// ---------------------------------------------------------------------------
+function writeIfChanged(file, content) {
+  try {
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === content) return false;
+  } catch (e) { /* ilegivel: reescreve */ }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+  return true;
+}
+
+// Semente: cria so se nao existir. E o contrato dos arquivos que sao do USUARIO
+// (CLIENTE.md, chamados/_TEMPLATE.md) -- o Cockpit da o ponto de partida e nunca
+// mais encosta. Sem isto nao ha onde guardar conhecimento do cliente que
+// sobreviva a regeracao, e o usuario acaba editando o CLAUDE.md, que e apagado.
+function ensureFile(file, content) {
+  if (fs.existsSync(file)) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Protocolo de trabalho: bloco comum a TODOS os engines.
+//
+// Entra uma vez so, no fim do CLAUDE.md/AGENTS.md, depois dos blocos de engine.
+// Nao mora dentro do engine porque fala do workspace (chamado, HANDOFF) e nao do
+// cliente ADT -- numa pasta com duas conexoes de engines diferentes o texto sairia
+// duplicado.
+//
+// E lido pelo agente em toda sessao nova, entao cada linha custa token: so entra
+// aqui o que muda o comportamento dele.
+// ---------------------------------------------------------------------------
+function protocoloChamados() {
+  return [
+    '## Protocolo de trabalho — leia antes de agir',
+    '',
+    'Este workspace e de **um cliente**. Todo trabalho pertence a um **chamado**.',
+    '',
+    '1. **Descubra qual chamado.** O usuario diz o ID, ou ele aparece no caminho do',
+    '   arquivo anexado (ex.: `.../Chamados/DEL-R2R-018/spec.pptx`). Sem ID, liste',
+    '   `chamados/` e pergunte — nao comece no escuro.',
+    '2. **Leia `chamados/<ID>/HANDOFF.md` antes de qualquer outra coisa.** Ele diz o',
+    '   ambiente, o que ja esta no sistema, as decisoes tomadas e o proximo passo.',
+    '   Nao existe? Crie a partir de `chamados/_TEMPLATE.md`.',
+    '3. **Leia `CLIENTE.md`** (na raiz), se existir: e o que vale para todos os',
+    '   chamados deste cliente e nao cabe neste arquivo gerado.',
+    '4. **Atualize o HANDOFF ao fim de cada bloco de trabalho.** E a unica coisa que',
+    '   sobrevive ao fim do chat — a proxima sessao comeca por ele.',
+    '',
+    '| Arquivo | Dono |',
+    '|---|---|',
+    '| `CLAUDE.md`, `AGENTS.md` | Cockpit. **Nao edite**: sao sobrescritos sem aviso |',
+    '| `CLIENTE.md` | voce/usuario. O Cockpit semeia uma vez e nunca sobrescreve |',
+    '| `docs/` | conhecimento atemporal do cliente (padroes, integracao, processo) |',
+    '| `chamados/<ID>/HANDOFF.md` | estado de um chamado |',
+    '| `.env`, `.vsp.json`, `cookies*.txt` | segredo. Nunca leia, nunca versione |',
+    '',
+    'Vasculhar a pasta gasta token a toa: fique em `CLIENTE.md`, `docs/` e',
+    '`chamados/<ID>/`. Nao rode `glob`/`ls` recursivo na raiz.',
+    ''
+  ].join('\n');
+}
+
+// Semente do CLIENTE.md: so os cabecalhos, para o usuario preencher. Vazio de
+// proposito -- texto de exemplo tende a ficar la para sempre e virar ruido que o
+// agente le em toda sessao.
+function clienteSeed(nome) {
+  return [
+    '# ' + nome,
+    '',
+    'O que vale para **todos** os chamados deste cliente.',
+    '',
+    'Este arquivo e seu: o Cockpit cria uma vez e nunca mais encosta. O `CLAUDE.md`',
+    'ao lado e gerado e sobrescrito sem aviso — nao escreva nada la.',
+    '',
+    '## Sistema e acesso',
+    '',
+    '<!-- Release, ECC ou S/4, on-prem ou cloud, o que costuma faltar de autorizacao. -->',
+    '',
+    '## Padroes do cliente',
+    '',
+    '<!-- Nomenclatura, pacote, camada, prefixo, como o transporte funciona aqui. -->',
+    '',
+    '## Armadilhas conhecidas',
+    '',
+    '<!-- O que ja custou tempo neste cliente e nao esta documentado em outro lugar. -->',
+    '',
+    '## Pessoas',
+    '',
+    '<!-- Funcional, Basis, PO: quem decide o que. -->',
+    ''
+  ].join('\n');
+}
+
+// Semente do HANDOFF. As quatro secoes respondem o que a proxima sessao precisa:
+// onde mexer, o que ja existe, por que esta assim, e o que falta. A secao de
+// decisoes e a que mais importa -- o resto da pra reconstruir olhando o sistema.
+function templateHandoff() {
+  return [
+    '# <ID> — <titulo do chamado>',
+    '',
+    'Ultima atualizacao: **<dd.mm.aaaa>**',
+    '',
+    '## Ambiente',
+    '',
+    '| | |',
+    '|---|---|',
+    '| MCP de desenvolvimento | `<profile>` — client `<nnn>`, usuario `<USER>`, mode `<mode>` |',
+    '| MCP de leitura | `<profile>` |',
+    '| Request | `<TRANSPORTE>` |',
+    '| Pacote | `<PACOTE>` |',
+    '| Spec e anexos (Drive) | `<caminho da pasta do chamado no Drive>` |',
+    '',
+    '## O que o chamado pede',
+    '',
+    '<!-- Duas ou tres linhas: o que muda para o negocio. Nao o passo a passo. -->',
+    '',
+    '## O que ja esta no sistema',
+    '',
+    '| Objeto | Tipo | Situacao |',
+    '|---|---|---|',
+    '| | | |',
+    '',
+    '## Decisoes tomadas',
+    '',
+    '<!-- Cada uma com o PORQUE. E o unico conteudo que nao da pra reconstruir',
+    '     olhando o sistema depois. -->',
+    '',
+    '## Pendencias / proximo passo',
+    '',
+    '- [ ] ',
+    ''
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Geracao dos arquivos de apoio de um WORKSPACE (.vsp.json, CLAUDE.md,
 // AGENTS.md, .env, .gitignore). O server MCP nao esta aqui — ele e global.
 //
@@ -939,9 +1081,21 @@ function generateWorkspace(settings, folder, envs) {
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
   // Um bloco por engine presente na pasta: as instrucoes sao cheias de
   // particularidade do cliente ADT, entao nao da pra ter um texto so.
-  const instructions = grupos.map(g => g.engine.instructions(g.envs)).join('\n---\n\n');
-  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), instructions, 'utf8');
-  fs.writeFileSync(path.join(folder, 'AGENTS.md'), instructions, 'utf8');
+  // O protocolo de trabalho fecha o arquivo, depois dos blocos de engine: ele e
+  // do WORKSPACE (chamado, HANDOFF) e nao do cliente ADT, entao entra uma vez so.
+  const instructions = grupos.map(g => g.engine.instructions(g.envs))
+    .concat([protocoloChamados()])
+    .join('\n---\n\n');
+  writeIfChanged(path.join(folder, 'CLAUDE.md'), instructions);
+  writeIfChanged(path.join(folder, 'AGENTS.md'), instructions);
+
+  // ---- arquivos do USUARIO: semeados uma vez, nunca sobrescritos ----
+  // Sem eles nao ha onde guardar conhecimento do cliente que sobreviva a
+  // regeracao, e o usuario acaba editando o CLAUDE.md — que e apagado sem aviso.
+  const nomeCliente = (envs.find(e => e.client_name) || {}).client_name
+    || path.basename(folder);
+  ensureFile(path.join(folder, 'CLIENTE.md'), clienteSeed(nomeCliente));
+  ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
@@ -960,17 +1114,22 @@ function generateWorkspace(settings, folder, envs) {
       for (const v of vars) envLines.push(`${v}=${e.password}`);
     }
   }
-  fs.writeFileSync(path.join(folder, '.env'), envLines.join('\n') + '\n', 'utf8');
+  writeIfChanged(path.join(folder, '.env'), envLines.join('\n') + '\n');
 
   // ---- .gitignore ----
-  fs.writeFileSync(path.join(folder, '.gitignore'), [
+  writeIfChanged(path.join(folder, '.gitignore'), [
     '# SAP MCP Cockpit - arquivos sensiveis / locais',
-    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt', ''
-  ].join('\n'), 'utf8');
+    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt',
+    '',
+    '# Gerados pelo Cockpit: deterministicos, a outra maquina reconstroi ao ligar',
+    '# o MCP. O que e SEU vai no CLIENTE.md, que nunca e sobrescrito.',
+    'CLAUDE.md', 'AGENTS.md', ''
+  ].join('\n'));
 
   return {
     ok: true,
-    files: engineFiles.concat(['.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md']),
+    files: engineFiles.concat(['.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md',
+      'CLIENTE.md']),
     count: envs.length
   };
 }
@@ -1135,6 +1294,107 @@ ipcMain.handle('clients:load', () => {
 ipcMain.handle('clients:save', (_evt, clients) => {
   writeJson(CLIENTS_FILE, clients);
   return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// Levar as conexoes pra outra maquina.
+//
+// O clients.json NAO pode ser copiado direto: ele guarda senha em texto puro e
+// caminho absoluto de pasta. O export tira as duas coisas -- o arquivo resultante
+// pode ir por Drive, e-mail ou pendrive sem virar um vazamento.
+//
+// Senha nao viaja de proposito. O custo e baixo: conexao Cloud reloga por SSO na
+// maquina nova de qualquer jeito (o cookie e por maquina), entao so sobra
+// redigitar as on-premise, uma vez.
+// ---------------------------------------------------------------------------
+const EXPORT_FORMATO = 'sap-mcp-cockpit/conexoes';
+
+ipcMain.handle('conns:export', async () => {
+  const clients = readJson(CLIENTS_FILE, { environments: [] });
+  const envs = clients.environments || [];
+  if (!envs.length) return { ok: false, key: 'be.exportEmpty' };
+
+  // A pasta vira so o NOME dela. Na outra maquina a raiz pode ser outra, e o
+  // import remonta <raiz>/<nome>. Caminho absoluto daqui nao serve la.
+  const pastas = {};
+  for (const [cliente, dir] of Object.entries(clients.folders || {})) {
+    if (dir) pastas[cliente] = path.basename(dir);
+  }
+
+  let comSenha = 0;
+  const limpas = envs.map(e => {
+    const copia = Object.assign({}, e);
+    if (copia.password) comSenha++;
+    delete copia.password;
+    delete copia.folder;
+    return copia;
+  });
+
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exportar conexoes',
+    defaultPath: 'conexoes-cockpit.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (res.canceled || !res.filePath) return { ok: false, key: 'be.exportCanceled' };
+
+  writeJson(res.filePath, {
+    formato: EXPORT_FORMATO,
+    versao: 1,
+    exportadoEm: new Date().toISOString(),
+    aviso: 'Sem senhas: redigite as conexoes on-premise apos importar.',
+    folders: pastas,
+    environments: limpas
+  });
+  return { ok: true, key: 'be.exportOk', args: [limpas.length, comSenha], file: res.filePath };
+});
+
+ipcMain.handle('conns:import', async () => {
+  const escolha = await dialog.showOpenDialog(mainWindow, {
+    title: 'Importar conexoes',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (escolha.canceled || !escolha.filePaths.length) return { ok: false, key: 'be.importCanceled' };
+
+  let pacote;
+  try {
+    pacote = JSON.parse(fs.readFileSync(escolha.filePaths[0], 'utf8'));
+  } catch (e) {
+    return { ok: false, key: 'be.importBadJson', args: [e.message] };
+  }
+  if (!pacote || pacote.formato !== EXPORT_FORMATO || !Array.isArray(pacote.environments)) {
+    return { ok: false, key: 'be.importBadFile' };
+  }
+
+  const raiz = await dialog.showOpenDialog(mainWindow, {
+    title: 'Raiz dos workspaces (as pastas dos clientes ficam dentro dela)',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (raiz.canceled || !raiz.filePaths.length) return { ok: false, key: 'be.importCanceled' };
+  const base = raiz.filePaths[0].replace(/\\/g, '/');
+
+  const clients = readJson(CLIENTS_FILE, { environments: [] });
+  if (!Array.isArray(clients.environments)) clients.environments = [];
+  if (!clients.folders) clients.folders = {};
+
+  // Conexao que ja existe aqui NAO e tocada: ela tem senha, e o pacote nao. Um
+  // "update" apagaria a senha de quem ja estava configurado.
+  const jaTem = new Set(clients.environments.map(envIdOf));
+  let novas = 0, existentes = 0, pedemSenha = 0;
+  for (const e of pacote.environments) {
+    if (jaTem.has(envIdOf(e))) { existentes++; continue; }
+    clients.environments.push(e);
+    jaTem.add(envIdOf(e));
+    novas++;
+    if (e.auth_type !== 'cloud') pedemSenha++;
+  }
+
+  for (const [cliente, nome] of Object.entries(pacote.folders || {})) {
+    if (!clients.folders[cliente]) clients.folders[cliente] = base + '/' + nome;
+  }
+
+  writeJson(CLIENTS_FILE, clients);
+  return { ok: true, key: 'be.importOk', args: [novas, existentes, pedemSenha] };
 });
 
 ipcMain.handle('dialog:pickFile', async (_evt, opts) => {
