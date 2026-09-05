@@ -151,14 +151,23 @@ Clique em **Testar** no card. O Cockpit faz uma busca leve no SAP e diz se está
 
 ---
 
-## 7. Gerar as configs
+## 7. Onde as configs sao geradas
 
-Clique em **Gerar configs**. Isso escreve, na pasta do workspace:
-- `.vsp.json`, `.env`, `cookies-<profile>.txt`
-- `.mcp.json` (pro **Claude Code**)
-- `CLAUDE.md` / `AGENTS.md` (instruções que a IA lê)
+Nao ha botao de "gerar": o Cockpit escreve os arquivos sozinho — **ao abrir o
+app**, e tambem quando voce liga o MCP de uma conexao, troca o engine dela ou usa
+**Re-sincronizar configs** nas Configuracoes.
 
-E, se você usa **Codex**, mescla o servidor MCP no seu **`~/.codex/config.toml` global** (o Codex lê de lá, não da pasta do projeto).
+Na pasta do workspace:
+- `.vsp.json`, `.env`, `.gitignore`, `cookies-<profile>.txt`
+- `CLAUDE.md` / `AGENTS.md` — as instrucoes que a IA le
+- `docs/README.md` e `chamados/_TEMPLATE.md` — criados so se ainda nao existirem
+
+O **servidor MCP** nao fica na pasta: ele vai pro escopo global — `~/.claude.json`
+(Claude Code) e `~/.codex/config.toml` (Codex). Server de projeto nao carrega sem
+aprovacao interativa, entao ficava preso em *pending approval*.
+
+> Arquivo que ja existe com o mesmo conteudo nao e reescrito. Se voce versiona o
+> workspace no git, abrir o Cockpit nao vai sujar o `git status`.
 
 ---
 
@@ -180,7 +189,61 @@ Peça pro LLM **listar as ferramentas MCP**. Devem aparecer as `mcp__<profile>__
 
 ---
 
-## 9. ⭐ A primeira mensagem pro LLM (importante!)
+## 9. Como o workspace se organiza (`docs/` e `chamados/`)
+
+Ao abrir, o Cockpit cria duas pastas em cada workspace. Elas não são decoração:
+o `CLAUDE.md` / `AGENTS.md` gerado manda o LLM usá-las, e é isso que faz uma
+conversa nova continuar de onde a anterior parou.
+
+```
+MeuCliente/
+├── CLAUDE.md  AGENTS.md   gerados pelo Cockpit — NAO edite, sao sobrescritos
+├── docs/                  o que vale pra TODOS os trabalhos deste cliente
+│   └── README.md          indice; comeca vazio e voce preenche
+└── chamados/              um trabalho por pasta
+    ├── _TEMPLATE.md
+    └── DEL-R2R-018/
+        └── HANDOFF.md     estado deste trabalho
+```
+
+**A regra é uma só: cada coisa tem um dono.**
+
+| Pasta | De quem é | O que guarda |
+|---|---|---|
+| `CLAUDE.md`, `AGENTS.md` | do Cockpit | reescritos a cada abertura. Nunca escreva neles |
+| `docs/` | **seu** | padrão de nomenclatura, como o transporte funciona aqui, armadilha do ambiente, quem decide o quê |
+| `chamados/<chave>/` | **seu** | um `HANDOFF.md` por trabalho: ambiente, o que já foi feito, decisões e próximo passo |
+
+### O que é uma "frente"
+
+Cada pasta em `chamados/` é uma frente de trabalho, identificada por uma **chave
+estável**. Normalmente é o número do chamado (`DEL-R2R-018`, `GAP276`), mas pode
+ser uma request de transporte (`S4DK900689`), uma EF, ou um nome de frente
+contínua (`QUALITY`). O que importa é ser sempre a mesma coisa pro mesmo assunto.
+
+### Por que isso importa
+
+Quando o chat fica grande e você abre outro, o contexto anterior se perde. O
+`HANDOFF.md` é o que sobrevive: a sessão nova lê o arquivo e retoma sabendo o que
+já está no sistema e por que as decisões foram tomadas — em vez de recomeçar do
+zero e você reexplicar tudo.
+
+O mesmo vale pro `docs/`: o padrão do cliente é descoberto uma vez e reusado em
+todos os trabalhos seguintes.
+
+### Já usava o Cockpit antes disso
+
+Suas pastas continuam como estavam — nada é movido. Se você tiver arquivos de
+contexto soltos na raiz do workspace, o LLM vai notar no primeiro chat, propor
+uma organização **e pedir sua autorização antes de mover qualquer coisa**.
+
+Não quer? Diga que não. Ele volta a perguntar em outro chat. Se não quiser mais
+ser perguntado, diga *"não me pergunte mais isso"* — ele anota no seu
+`docs/README.md` e para de vez.
+
+---
+
+## 10. ⭐ A primeira mensagem pro LLM (importante!)
 
 Logo de cara, avise a IA pra **usar as ferramentas MCP** e **não** chamar o `vsp.exe` na mão pelo terminal. Cole isto no chat:
 
@@ -198,7 +261,7 @@ Troque `<profile>` pelo nome do seu ambiente (ex.: `acme-qas`).
 
 ---
 
-## 10. Resolução de problemas (rápido)
+## 11. Resolução de problemas (rápido)
 
 | Sintoma | Causa / solução |
 |---|---|
