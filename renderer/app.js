@@ -15,6 +15,11 @@ let landscapeCache = null;      // arvore do SAPUILandscape.xml, carregada sob d
 // 'form' = escolher um sistema PREENCHE o formulario aberto (botao dentro do modal)
 let importMode = 'new';
 const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
+// profile id -> id do engine que GEROU a config registrada (inferido pelo main).
+// Comparado com o engine atual da conexao, e o que denuncia config desatualizada.
+const globalEngines = new Map();
+// [{ id, label, caps }] — vem do main; o renderer nao consegue ler lib/engines.
+let engineDefs = [];
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -37,6 +42,10 @@ async function changeLang(lang) {
     // o applyI18n repoe o rotulo pelo data-i18n ("Mostrar"), que fica errado se
     // a senha estiver a vista: reescreve pelo estado real do campo
     setPassVisible($('f-pass').type === 'text');
+    // o seletor de engine e os modos sao montados em JS (sem data-i18n): o
+    // applyI18n nao os alcanca, entao remonta preservando a escolha atual
+    buildEngineSeg(currentEngineChoice());
+    applyEngineCaps();
   }
 }
 
@@ -51,6 +60,46 @@ function slug(text) {
     .replace(/^-+|-+$/g, '');
 }
 function profileId(e) { return slug(e.client_name) + '-' + slug(e.env_name); }
+
+// ---------------------------------------------------------------------------
+// Engines (vsp / ARC-1)
+//
+// A conexao pode nao escolher: `e.engine` vazio significa HERDAR o padrao do
+// app. Isso mantem toda conexao antiga funcionando sem migracao e deixa a troca
+// em massa ser um campo so nas Configuracoes.
+// ---------------------------------------------------------------------------
+function engineDefById(id) {
+  return engineDefs.find(x => x.id === id) || null;
+}
+function defaultEngineId() {
+  const id = settings.default_engine || 'vsp';
+  return engineDefById(id) ? id : ((engineDefs[0] && engineDefs[0].id) || 'vsp');
+}
+// O engine EFETIVO da conexao (ja resolvida a heranca).
+function engineIdOf(e) {
+  const escolhido = (e && e.engine) || '';
+  return (escolhido && engineDefById(escolhido)) ? escolhido : defaultEngineId();
+}
+function engineDefOf(e) {
+  return engineDefById(engineIdOf(e)) || { id: 'vsp', label: 'vsp', caps: {} };
+}
+function engineCapsOf(e) {
+  return engineDefOf(e).caps || {};
+}
+// Rotulo pro detalhe: deixa claro quando esta herdando em vez de ter escolhido.
+function engineLabelOf(e) {
+  const def = engineDefOf(e);
+  return (e && e.engine) ? def.label : t('engine.inherited', def.label);
+}
+// A config registrada foi gerada por outro engine? (so faz sentido se registrada)
+function engineDrift(e) {
+  const id = profileId(e);
+  if (!globalProfiles.has(id)) return null;
+  const gerado = globalEngines.get(id);
+  if (!gerado || gerado === engineIdOf(e)) return null;
+  const def = engineDefById(gerado);
+  return { from: def ? def.label : gerado, to: engineDefOf(e).label };
+}
 
 // ---------------------------------------------------------------------------
 // Conexoes RFC (SAProuter)
@@ -168,16 +217,42 @@ function appPrompt(title, message) {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+// Opcoes do seletor de engine padrao. Montadas em JS porque a lista de engines
+// e do main — a UI nao decide quais existem.
+function fillEngineSelect() {
+  const sel = $('set-engine');
+  if (!sel) return;
+  sel.innerHTML = '';
+  for (const d of engineDefs) {
+    const o = document.createElement('option');
+    o.value = d.id;
+    o.textContent = d.label;
+    sel.appendChild(o);
+  }
+  sel.value = defaultEngineId();
+}
+
 function fillSettings() {
-  $('set-vsp').value     = settings.vsp_path || '';
-  $('set-chrome').value  = settings.chrome_path || '';
-  $('set-vscode').value  = settings.vscode_cmd || 'code';
+  fillEngineSelect();
+  $('set-vsp').value      = settings.vsp_path || '';
+  $('set-arc1cmd').value  = settings.arc1_cmd || '';
+  $('set-arc1args').value = settings.arc1_args || '';
+  // vazio de proposito: vazio = usa o node do PATH
+  $('set-node').value     = settings.node_path || '';
+  $('set-chrome').value   = settings.chrome_path || '';
+  $('set-vscode').value   = settings.vscode_cmd || 'code';
   // vazio de proposito: vazio = usa o Python que vem junto no app
-  $('set-python').value  = settings.python_path || '';
-  $('set-nwrfc').value   = settings.nwrfc_lib || '';
+  $('set-python').value   = settings.python_path || '';
+  $('set-nwrfc').value    = settings.nwrfc_lib || '';
 }
 function readSettingsFromForm() {
+  // o select so existe depois que a lista de engines chegou; sem ela, preserva
+  if ($('set-engine') && $('set-engine').value) settings.default_engine = $('set-engine').value;
   settings.vsp_path     = $('set-vsp').value.trim();
+  // vazios de proposito: vazio = `npx -y arc-1@latest` (ver lib/engines/arc1.js)
+  settings.arc1_cmd     = $('set-arc1cmd').value.trim();
+  settings.arc1_args    = $('set-arc1args').value.trim();
+  settings.node_path    = $('set-node').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
   settings.python_path  = $('set-python').value.trim();
@@ -188,6 +263,93 @@ async function saveSettings() {
   readSettingsFromForm();
   await window.api.saveSettings(settings);
   setStatus(t('msg.settingsSaved'), 'ok');
+  renderArc1Status(); // o override manual e o node podem ter mudado o runtime
+}
+
+// ---------------------------------------------------------------------------
+// ARC-1: instalacao gerenciada
+//
+// Sem ela o app cai em `npx -y arc-1@latest`, que custa 6-18s a CADA start do
+// server MCP e ainda troca a versao sozinho. Aqui o usuario ve o que vai rodar
+// de fato, fixa a versao e atualiza quando quiser.
+// ---------------------------------------------------------------------------
+let arc1Ultima = null; // ultima versao vista no registry (so apos clicar)
+
+async function renderArc1Status() {
+  const box = $('arc1-status');
+  if (!box) return;
+  const btnInst = $('btn-arc1-install');
+  let s;
+  try { s = await window.api.arc1Status({ settings }); } catch (e) { return; }
+  if (!s || !s.ok) { box.textContent = msgOf(s) || '—'; return; }
+
+  box.classList.remove('ok', 'warn');
+  let texto;
+  if (s.mode === 'manual') {
+    box.classList.add('warn');
+    texto = t('arc1.modeManual', s.command);
+  } else if (s.mode === 'local') {
+    box.classList.add('ok');
+    texto = t('arc1.modeLocal', s.active, s.node.version || '?');
+  } else {
+    box.classList.add('warn');
+    texto = s.node.ok
+      ? t('arc1.modeNpx', s.node.version || '?')
+      : t(s.node.motivo === 'tooOld' ? 'arc1.nodeOld' : 'arc1.noNode', s.node.version || '—', s.node.minimo);
+  }
+  if (arc1Ultima && s.active && arc1Ultima !== s.active) texto += ' · ' + t('arc1.updateAvail', arc1Ultima);
+  box.textContent = texto;
+
+  // Sem node compativel nao ha o que instalar — o fallback npx segue valendo.
+  btnInst.disabled = !s.node.ok;
+  btnInst.textContent = s.active
+    ? t('settings.arc1.update', arc1Ultima && arc1Ultima !== s.active ? arc1Ultima : t('arc1.latest'))
+    : t('settings.arc1.install');
+}
+
+async function doArc1CheckLatest(btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('settings.arc1.checking'); }
+  const r = await window.api.arc1CheckLatest();
+  if (btn) { btn.disabled = false; btn.textContent = label || t('settings.arc1.check'); }
+  if (!r.ok) { setStatus('✗ ' + msgOf(r), 'err'); return; }
+  arc1Ultima = r.version;
+  const s = await window.api.arc1Status({ settings });
+  const igual = s.ok && s.active === r.version;
+  setStatus(igual ? '✓ ' + t('msg.arc1UpToDate', r.version) : '✓ ' + t('msg.arc1NewVersion', r.version),
+    igual ? 'ok' : 'warn');
+  renderArc1Status();
+}
+
+async function doArc1Install(btn) {
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('settings.arc1.installing'); }
+  setStatus(t('msg.arc1Installing'));
+
+  const res = await window.api.arc1Install({ settings, version: arc1Ultima || null });
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  if (res.log) lastLog = res.log;
+  if (!res.ok) { setStatus('✗ ' + msgOf(res), 'err'); renderArc1Status(); return; }
+
+  // A versao entra no CAMINHO do comando, entao as configs ja gravadas apontam
+  // pra versao antiga. Regera so se houver conexao ARC-1 registrada — senao
+  // seria uma varredura a toa.
+  const precisam = (clients.environments || [])
+    .filter(e => engineIdOf(e) === 'arc1' && globalProfiles.has(profileId(e)));
+  let extra = '';
+  if (precisam.length) {
+    const rs = await window.api.resyncAll({ settings, envs: (clients.environments || []).map(withFolder) });
+    extra = rs.ok
+      ? ' — ' + t('msg.arc1Resynced', precisam.length) + ' ' + t('msg.engineRestart')
+      : ' — ' + msgOf(rs);
+  }
+  setStatus('✓ ' + msgOf(res) + extra, 'ok');
+  arc1Ultima = res.version;
+  renderArc1Status();
+  await refreshMcpStatus();
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +361,9 @@ function switchView(name) {
   });
   $('view-conns').classList.toggle('hidden', name !== 'conns');
   $('view-settings').classList.toggle('hidden', name !== 'settings');
+  // o estado do ARC-1 muda por fora do app (instalacao, node novo no PATH):
+  // reconsulta ao abrir a tela em vez de confiar no que foi lido no boot
+  if (name === 'settings') renderArc1Status();
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +663,31 @@ function renderDetail() {
   openBox.append(oBtn, menu);
   actions.appendChild(openBox);
 
+  // Chave do engine: um clique troca e ja regera a config se a conexao estiver
+  // registrada. A primeira opcao e herdar o padrao do app.
+  const drift = engineDrift(e);
+  const engBox = document.createElement('span');
+  engBox.className = 'dropdown';
+  const engBtn = document.createElement('button');
+  engBtn.className = 'btn btn-sm' + (drift ? ' btn-warn' : '');
+  engBtn.textContent = t('detail.engineBtn', engineDefOf(e).label) + ' ▾';
+  engBtn.title = drift ? t('detail.engineDrift', drift.from, drift.to) : t('detail.engineBtn.title');
+  const engMenu = document.createElement('div');
+  engMenu.className = 'menu hidden';
+  const padraoDef = engineDefById(defaultEngineId());
+  const escolhas = [{ id: '', label: t('engine.inherit', padraoDef ? padraoDef.label : defaultEngineId()) }]
+    .concat(engineDefs.map(d => ({ id: d.id, label: d.label })));
+  for (const c of escolhas) {
+    const mi = document.createElement('button');
+    mi.className = 'menu-item' + (((e.engine || '') === c.id) ? ' on' : '');
+    mi.textContent = ((e.engine || '') === c.id ? '✓ ' : '') + c.label;
+    mi.onclick = () => switchEngine(idx, c.id);
+    engMenu.appendChild(mi);
+  }
+  engBtn.onclick = (ev) => { ev.stopPropagation(); closeMenus(engMenu); engMenu.classList.toggle('hidden'); };
+  engBox.append(engBtn, engMenu);
+  actions.appendChild(engBox);
+
   mk(t('card.test'), '', function () { doTest(e, this); });
   mk(t('card.edit'), '', () => openModal(idx));
   mk(t('card.duplicate'), '', () => duplicateEnv(idx));
@@ -525,6 +715,9 @@ function renderDetail() {
   const lbl = (key) => t(key).replace(/\s*\*$/, '');
   const rows = [
     [lbl('f.auth'), authLabel(e)],
+    // o engine decide o binario e as flags: e a primeira coisa a conferir quando
+    // a conexao se comporta diferente do esperado
+    [lbl('f.engine'), engineLabelOf(e) + (drift ? ' · ⚠ ' + t('detail.engineDrift', drift.from, drift.to) : '')],
     [lbl('f.url'), urlOfEnv(e) || '—'],
     [lbl('f.sapclient'), e.sap_client || '—'],
     [lbl('f.user'), e.auth_type !== 'cloud' ? (e.user || '—') : '—'],
@@ -639,6 +832,84 @@ function currentAuthType() {
   return document.querySelector('input[name=auth]:checked').value;
 }
 
+// ---- seletor de engine do formulario --------------------------------------
+// A primeira opcao e "herdar o padrao do app" (valor ''), e nao um engine. E o
+// que faz trocar o padrao nas Configuracoes valer pras conexoes de uma vez.
+function buildEngineSeg(escolhido) {
+  const box = $('f-engine-seg');
+  if (!box) return;
+  box.innerHTML = '';
+  const padrao = engineDefById(defaultEngineId());
+  const opcoes = [{ id: '', label: t('engine.inherit', padrao ? padrao.label : defaultEngineId()) }]
+    .concat(engineDefs.map(d => ({ id: d.id, label: d.label })));
+  for (const o of opcoes) {
+    const lab = document.createElement('label');
+    lab.className = 'seg-opt';
+    const inp = document.createElement('input');
+    inp.type = 'radio';
+    inp.name = 'engine';
+    inp.value = o.id;
+    inp.checked = (escolhido || '') === o.id;
+    inp.onchange = applyEngineCaps;
+    const sp = document.createElement('span');
+    sp.textContent = o.label;
+    lab.append(inp, sp);
+    box.appendChild(lab);
+  }
+}
+// '' = herdando. Use pra GRAVAR.
+function currentEngineChoice() {
+  const sel = document.querySelector('input[name=engine]:checked');
+  return sel ? sel.value : '';
+}
+// O engine efetivo selecionado agora. Use pra decidir o que mostrar.
+function currentEngineId() {
+  return currentEngineChoice() || defaultEngineId();
+}
+
+// Ajusta o formulario ao engine escolhido: os modos nao sao os mesmos e nem todo
+// engine tem "edits transportaveis". O rotulo que o usuario ve continua o mesmo
+// (ex.: "somente leitura"); quem traduz pra flag do binario e o engine.
+function applyEngineCaps() {
+  const def = engineDefById(currentEngineId());
+  const caps = (def && def.caps) || {};
+
+  const modos = caps.modes || ['focused', 'expert', 'hyperfocused'];
+  const sel = $('f-mode');
+  const antes = sel.value;
+  sel.innerHTML = '';
+  for (const m of modos) {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = t('mode.' + m);
+    sel.appendChild(o);
+  }
+  // mantem a escolha do usuario quando o modo existe nos dois engines
+  sel.value = modos.includes(antes) ? antes : modos[0];
+
+  // sem equivalente no engine: esconder e melhor que oferecer um check morto
+  const caixa = $('f-transp-edit').closest('.check');
+  if (caixa) caixa.classList.toggle('hidden', caps.transportableEdits === false);
+
+  const hint = $('f-engine-hint');
+  if (hint) {
+    const avisos = [];
+    if (caps.browserAuth === false) avisos.push(t('engine.noBrowserAuth'));
+    if (caps.cliTest === false)     avisos.push(t('engine.noCliTest'));
+    hint.textContent = avisos.length
+      ? def.label + ' — ' + avisos.join(' ')
+      : t('f.engine.hint');
+  }
+}
+
+// Seleciona um modo respeitando as opcoes do engine atual (o modo salvo pode
+// nao existir no engine novo).
+function setModeValue(modo) {
+  const sel = $('f-mode');
+  const existe = [...sel.options].some(o => o.value === modo);
+  sel.value = existe ? modo : (sel.options[0] ? sel.options[0].value : '');
+}
+
 // Mostrar/esconder a senha da conexao Private. Volta pra escondida sempre que
 // o modal abre — senao a senha de um cliente ficaria a vista ao editar o proximo.
 function setPassVisible(mostrar) {
@@ -674,7 +945,10 @@ function openModal(idx, opts) {
   $('f-saprouter').value = e ? (e.saprouter || '') : '';
   // conexao nova ja nasce numa porta livre; editando, mantem a dela
   $('f-bridgeport').value = (e && e.bridge_port) ? e.bridge_port : nextBridgePort(editIndex);
-  $('f-mode').value      = e ? (e.mode || 'focused') : 'focused';
+  // engine ANTES do modo: as opcoes de modo dependem de qual engine esta escolhido
+  buildEngineSeg(e ? (e.engine || '') : '');
+  applyEngineCaps();
+  setModeValue(e ? (e.mode || 'focused') : 'focused');
   $('f-lang').value      = e ? (e.language || '') : '';
   $('f-readonly').checked    = e ? !!e.read_only : false;
   $('f-transp-edit').checked = e ? (e.allow_transportable_edits !== false) : true;
@@ -741,6 +1015,10 @@ async function saveEnv() {
     allow_transportable_edits: $('f-transp-edit').checked,
     enable_transports:         $('f-transp').checked
   };
+  // Vazio = herda o padrao do app. Grava a CHAVE so quando o usuario escolheu,
+  // pra trocar o padrao continuar valendo pra quem nunca escolheu nada.
+  const engEscolhido = currentEngineChoice();
+  if (engEscolhido) e.engine = engEscolhido;
 
   // validacao
   if (!e.client_name || !e.env_name || !e.url || !e.sap_client) {
@@ -986,6 +1264,22 @@ function withFolder(e) {
   return Object.assign({}, e, { folder: folderOf(e.client_name) });
 }
 
+// (Re)grava a config global DESTA conexao e os arquivos de apoio da pasta.
+// Extraida do toggleMcp porque a troca de engine precisa do mesmo caminho: sem
+// regravar, o ~/.claude.json continuaria com o comando do engine antigo.
+async function regenerateGlobal(env, dir) {
+  // TODAS as conexoes que dividem esta pasta: o .vsp.json lista todas, e
+  // gravar so a clicada apagaria as outras do arquivo
+  const daPasta = (clients.environments || []).filter(x => folderOf(x.client_name) === dir);
+  const res = await window.api.generateGlobal({ settings, env: withFolder(env), envs: daPasta.map(withFolder) });
+  // Codex le MCP so do config global dele: acompanha na mesma acao
+  if (res.ok) {
+    const todas = (clients.environments || []).filter(x => globalProfiles.has(profileId(x)) || profileId(x) === profileId(env));
+    await window.api.syncCodex({ settings, envs: todas.map(withFolder) });
+  }
+  return res;
+}
+
 // Liga/desliga o MCP da conexao (escopo global).
 async function toggleMcp(env, jaAtivo) {
   closeMenus();
@@ -1002,19 +1296,93 @@ async function toggleMcp(env, jaAtivo) {
       ? await window.api.removeGlobal({ settings, env: withFolder(env) })
       : null;
   } else {
-    // TODAS as conexoes que dividem esta pasta: o .vsp.json lista todas, e
-    // gravar so a clicada apagaria as outras do arquivo
-    const daPasta = (clients.environments || []).filter(x => folderOf(x.client_name) === dir);
-    res = await window.api.generateGlobal({ settings, env: withFolder(env), envs: daPasta.map(withFolder) });
+    res = await regenerateGlobal(env, dir);
   }
   if (!res) return; // usuario cancelou a confirmacao
 
-  // Codex le MCP so do config global dele: acompanha na mesma acao
-  if (res.ok) {
-    const todas = (clients.environments || []).filter(x => globalProfiles.has(profileId(x)) || profileId(x) === profileId(env));
-    await window.api.syncCodex({ settings, envs: todas.map(withFolder) });
-  }
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res), res.ok ? 'ok' : 'err');
+  await refreshMcpStatus();
+}
+
+// Troca o engine de UMA conexao. '' = voltar a herdar o padrao do app.
+//
+// Se a conexao ja estiver registrada, regrava a config na hora — senao a troca
+// ficaria so no clients.json e o host MCP continuaria subindo o engine antigo,
+// que e exatamente o tipo de divergencia silenciosa que da suporte.
+async function switchEngine(idx, escolha) {
+  closeMenus();
+  const env = (clients.environments || [])[idx];
+  if (!env) return;
+  if ((env.engine || '') === (escolha || '')) return; // ja e esse: nao faz nada
+
+  const antes = engineIdOf(env);
+  const cruAntes = env.engine;   // valor CRU (undefined = herdava o padrao)
+  if (escolha) env.engine = escolha; else delete env.engine;
+  await persistClients();
+  const depois = engineIdOf(env);
+
+  // Nao registrada: nao ha config pra corrigir, a proxima geracao ja sai certa.
+  if (!globalProfiles.has(profileId(env))) {
+    setStatus(t('msg.engineSet', profileId(env), engineDefOf(env).label), 'ok');
+    render();
+    return;
+  }
+
+  const dir = await ensureFolder(env.client_name);
+  if (!dir) { setStatus(t('msg.folderNeeded', env.client_name), 'warn'); render(); return; }
+  const res = await regenerateGlobal(env, dir);
+
+  // A config foi RECUSADA (ex.: ARC-1 sem Node). Manter a escolha nova no
+  // clients.json deixaria a tela dizendo um engine e o host subindo outro --
+  // exatamente a divergencia silenciosa que o resto desta funcao evita. Volta
+  // a escolha anterior pra tela e arquivo continuarem contando a mesma historia.
+  if (!res.ok) {
+    if (cruAntes === undefined) delete env.engine; else env.engine = cruAntes;
+    await persistClients();
+    setStatus('✗ ' + msgOf(res), 'err');
+    render();
+    await refreshMcpStatus();
+    return;
+  }
+
+  // Trocar o COMANDO nao basta derrubar o processo: o host guarda a linha de
+  // comando antiga e respawnaria o engine velho. Aqui o restart e obrigatorio.
+  const nota = (antes !== depois) ? ' — ' + t('msg.engineRestart') : '';
+  setStatus('✓ ' + msgOf(res) + killedNote(res) + nota, 'ok');
+  await refreshMcpStatus();
+}
+
+// Varredura: regrava a config de TODAS as conexoes ja registradas.
+// E o par do seletor de engine padrao — trocar o padrao so muda o que sera
+// gerado dali pra frente; isto alcanca o que ja estava no ~/.claude.json.
+async function doResyncAll(btn) {
+  readSettingsFromForm();
+  await window.api.saveSettings(settings);
+
+  const envs = (clients.environments || []).map(withFolder);
+  if (!envs.length) { setStatus(t('msg.resyncEmpty'), 'warn'); return; }
+
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('settings.resyncing'); }
+  const res = await window.api.resyncAll({ settings, envs });
+
+  let extra = '';
+  if (res.ok && res.switched && res.switched.length) {
+    extra += ' — ' + t('msg.resyncSwitched', res.switched.length) + ': ' +
+      res.switched.map(s => `${s.id} (${s.from} → ${s.to})`).join(', ') +
+      '. ' + t('msg.engineRestart');
+  }
+  if (res.ok && res.skipped && res.skipped.length) {
+    extra += ' — ' + t('msg.resyncSkipped', res.skipped.join(', '));
+  }
+  // Fora da varredura por nao ter como rodar. Vai com o MOTIVO de cada uma:
+  // so a lista de nomes deixaria o usuario adivinhando o que faltou instalar.
+  if (res.ok && res.blocked && res.blocked.length) {
+    extra += ' — ' + t('msg.resyncBlocked',
+      res.blocked.map(b => b.id + ' (' + msgOf(b) + ')').join('; '));
+  }
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res) + extra, res.ok ? 'ok' : 'err');
+  if (btn) { btn.disabled = false; btn.textContent = label || t('settings.resync'); }
   await refreshMcpStatus();
 }
 
@@ -1024,7 +1392,10 @@ async function refreshMcpStatus() {
   try {
     const res = await window.api.globalStatus();
     globalProfiles.clear();
+    globalEngines.clear();
     for (const p of (res.profiles || [])) globalProfiles.add(p);
+    // qual engine gerou cada entrada — alimenta o aviso de config desatualizada
+    for (const [p, eng] of Object.entries(res.engines || {})) globalEngines.set(p, eng);
   } catch (e) { /* sem status: segue sem selo */ }
 
   // conta so as conexoes DAQUI — o ~/.claude.json pode ter servers de terceiros
@@ -1128,8 +1499,11 @@ async function doDiagnose(btn) {
     if (!c.ok) {
       const h = document.createElement('div');
       h.className = 'diag-hint';
-      // o backend pode mandar uma dica mais especifica que a padrao do check
-      h.textContent = t(c.hintKey || ('diag.' + c.id + '.hint'));
+      // o backend pode mandar uma dica mais especifica que a padrao do check.
+      // innerHTML aqui e seguro: a dica e string do dicionario, sem interpolacao
+      // de dado externo. O DETALHE, logo acima, e saida crua de subprocesso e
+      // continua como textContent de proposito.
+      h.innerHTML = t(c.hintKey || ('diag.' + c.id + '.hint'));
       txt.appendChild(h);
     }
     row.append(icon, txt);
@@ -1152,6 +1526,9 @@ async function pick(kind) {
   } else if (kind === 'python') {
     const p = await window.api.pickFile({ title: t('pick.python'), filters: exeFilters });
     if (p) $('set-python').value = p;
+  } else if (kind === 'node') {
+    const p = await window.api.pickFile({ title: t('pick.node'), filters: exeFilters });
+    if (p) $('set-node').value = p;
   } else if (kind === 'nwrfclib') {
     const p = await window.api.pickFolder({ title: t('pick.nwrfc') });
     if (p) $('set-nwrfc').value = p;
@@ -1184,6 +1561,20 @@ function bind() {
   // settings
   $('btn-save-settings').onclick = saveSettings;
   $('btn-diagnose').onclick = function () { doDiagnose(this); };
+  $('btn-resync').onclick = function () { doResyncAll(this); };
+  $('btn-arc1-install').onclick = function () { doArc1Install(this); };
+  $('btn-arc1-check').onclick   = function () { doArc1CheckLatest(this); };
+  // o npm baixa ~83 MB: sem eco, o botao ficaria mudo por um minuto
+  window.api.onArc1Progress((linha) => {
+    const l = String(linha || '').trim().split('\n').pop();
+    if (l) setStatus(t('settings.arc1.installing') + ' — ' + l.slice(0, 120));
+  });
+  // trocar o engine padrao muda o que as conexoes que HERDAM vao usar: o
+  // detalhe precisa refletir isso na hora, mesmo antes de salvar
+  $('set-engine').onchange = () => {
+    settings.default_engine = $('set-engine').value;
+    render();
+  };
   document.querySelectorAll('[data-pick]').forEach(btn => {
     btn.onclick = () => pick(btn.getAttribute('data-pick'));
   });
@@ -1298,8 +1689,15 @@ async function init() {
   settings = await window.api.loadSettings();
   clients  = await window.api.loadClients();
   if (!clients.environments) clients.environments = [];
+  // ANTES do fillSettings/render: o seletor de engine e os rotulos de "herdado"
+  // dependem desta lista. Sem ela o app ainda abre, so que sem seletor.
+  try {
+    const r = await window.api.enginesList();
+    engineDefs = (r && r.engines) || [];
+  } catch (e) { engineDefs = []; }
   window.i18n.setLang(settings.lang || 'en'); // ingles por padrao
   fillSettings();
+  renderArc1Status(); // sem await: nao segura o boot se o node demorar a responder
   render();
   await refreshCookieStatus();
   await refreshMcpStatus();

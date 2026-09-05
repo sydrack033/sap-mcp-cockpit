@@ -22,6 +22,16 @@ contextBridge.exposeInMainWorld('api', {
   generateGlobal: (p)      => ipcRenderer.invoke('configs:generateGlobal', p),
   removeGlobal: (p)        => ipcRenderer.invoke('configs:removeGlobal', p),
   globalStatus: ()         => ipcRenderer.invoke('configs:globalStatus'),
+  // varredura: regrava as configs de TODAS as conexoes ja registradas (usada
+  // depois de trocar o engine, que so muda o que sera gerado dali pra frente)
+  resyncAll: (p)           => ipcRenderer.invoke('configs:resyncAll', p),
+  // engines disponiveis (id/label/caps) pro seletor e pra adaptacao do form
+  enginesList: ()          => ipcRenderer.invoke('engines:list'),
+  // instalacao gerenciada do ARC-1 (evita o npx, que custa 6-18s por start)
+  arc1Status: (p)          => ipcRenderer.invoke('arc1:status', p),
+  arc1CheckLatest: ()      => ipcRenderer.invoke('arc1:checkLatest'),
+  arc1Install: (p)         => ipcRenderer.invoke('arc1:install', p),
+  onArc1Progress: (cb)     => ipcRenderer.on('arc1:progress', (_evt, linha) => cb(linha)),
   syncCodex: (p)           => ipcRenderer.invoke('mcp:syncCodex', p),
   vspLogin: (p)            => ipcRenderer.invoke('vsp:login', p),
   vspTest: (p)             => ipcRenderer.invoke('vsp:test', p),

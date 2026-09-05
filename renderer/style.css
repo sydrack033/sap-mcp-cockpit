@@ -288,6 +288,28 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   font-weight: 600;
 }
 .btn-ok:hover { border-color: var(--green); filter: brightness(1.08); }
+/* config registrada divergindo do engine selecionado: chama atencao sem gritar
+   como erro — a conexao ainda funciona, so esta desatualizada */
+/* linha de status do runtime do ARC-1 (instalado / npx / manual) */
+.runtime-status {
+  font-size: 12px;
+  padding: 8px 11px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+}
+.runtime-status.ok   { border-color: var(--green); color: var(--green); }
+.runtime-status.warn { border-color: var(--amber); color: var(--amber); }
+/* bloco avancado das Configuracoes: fechado por padrao */
+.adv { margin-top: 10px; }
+.adv > summary { font-size: 12px; color: var(--text-dim); cursor: pointer; padding: 4px 0; }
+.adv > summary:hover { color: var(--accent-hi); }
+.adv[open] > summary { margin-bottom: 8px; }
+
+.btn-warn { border-color: var(--amber); color: var(--amber); }
+.btn-warn:hover { border-color: var(--amber); filter: brightness(1.12); }
 .btn:disabled { opacity: .6; cursor: default; }
 .icon-btn {
   background: transparent;
@@ -329,6 +351,8 @@ input[type=text]:focus, input[type=password]:focus, select:focus {
   white-space: nowrap;
 }
 .menu-item:hover { background: rgba(63,191,99,.14); color: var(--accent-hi); }
+/* opcao ativa do menu (engine selecionado) */
+.menu-item.on { color: var(--accent-hi); font-weight: 600; }
 
 /* ---------- Arvore de conexoes (sidebar) ---------- */
 .env-search { width: 100%; }
@@ -624,6 +648,8 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
    classList.toggle('hidden') NAO vai esconder nada; tem que entrar aqui tambem. */
 #rfc-fields.hidden,
 #insecure-box.hidden,
+/* "edits transportaveis" some nos engines sem equivalente pra flag */
+.check.hidden,
 #url-field.hidden { display: none; }
 /* o campo de texto do dialogo so aparece no modo prompt; sem isto ele saia
    tambem nos alerts e confirms comuns */
