@@ -909,6 +909,261 @@ ipcMain.handle('sap:landscape', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Escrita idempotente dos arquivos do workspace.
+//
+// generateWorkspace roda em TODA ligada de MCP, troca de engine e varredura --
+// nao e um botao que o usuario aperta sabendo o que faz. Reescrever conteudo
+// identico so mexeria no mtime de arquivo em pasta versionada e produziria
+// "modificado" no git sem ninguem ter editado nada.
+// ---------------------------------------------------------------------------
+function writeIfChanged(file, content) {
+  try {
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === content) return false;
+  } catch (e) { /* ilegivel: reescreve */ }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+  return true;
+}
+
+// Semente: cria so se nao existir. E o contrato dos arquivos que sao do USUARIO
+// (docs/README.md, chamados/_TEMPLATE.md) -- o Cockpit da o ponto de partida e
+// mais encosta. Sem isto nao ha onde guardar conhecimento do cliente que
+// sobreviva a regeracao, e o usuario acaba editando o CLAUDE.md, que e apagado.
+function ensureFile(file, content) {
+  if (fs.existsSync(file)) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Protocolo de trabalho: bloco comum a TODOS os engines.
+//
+// Entra uma vez so, no fim do CLAUDE.md/AGENTS.md, depois dos blocos de engine.
+// Nao mora dentro do engine porque fala do workspace (chamado, HANDOFF) e nao do
+// cliente ADT -- numa pasta com duas conexoes de engines diferentes o texto sairia
+// duplicado.
+//
+// E lido pelo agente em toda sessao nova, entao cada linha custa token: so entra
+// aqui o que muda o comportamento dele.
+// ---------------------------------------------------------------------------
+function protocoloChamados() {
+  return [
+    '## Protocolo de trabalho — leia antes de agir',
+    '',
+    'Este workspace e de **um cliente**, e todo trabalho aqui pertence a uma',
+    '**frente**: normalmente um chamado (`DEL-R2R-018`, `GAP269`), mas pode ser uma',
+    'request de transporte (`S4DK900689`), uma EF, ou outro identificador. O que',
+    'importa e existir uma **chave estavel** que una as sessoes sobre o mesmo',
+    'assunto. Cada frente tem sua pasta em `chamados/<chave>/`.',
+    '',
+    'Um chat cobre **um cliente**, nao uma frente: a mesma conversa pode passar por',
+    'varias frentes em sequencia. Ao trocar de frente no meio do chat, **atualize o',
+    'HANDOFF da frente que voce esta deixando ANTES de abrir a proxima** — senao o',
+    'que foi descoberto nela morre quando a conversa terminar em outra. Depois',
+    'refaca os passos 1 e 2 para a nova.',
+    '',
+    '1. **Descubra a chave da frente.** O usuario diz, ou ela aparece no caminho do',
+    '   arquivo anexado (ex.: `.../Chamados/DEL-R2R-018/spec.pptx`).',
+    '   - Nao disse e ha pastas em `chamados/`? Liste e pergunte em qual estamos',
+    '     antes de comecar — errar de frente custa mais que uma pergunta.',
+    '   - Nao disse e nao ha nenhuma? Pedido pontual (uma consulta, uma duvida):',
+    '     atenda e siga. Trabalho que vai durar mais que esta conversa: **proponha',
+    '     uma chave** e abra o HANDOFF antes de comecar.',
+    '2. **Leia `chamados/<ID>/HANDOFF.md` antes de qualquer outra coisa.** Ele diz o',
+    '   ambiente, o que ja esta no sistema, as decisoes tomadas e o proximo passo.',
+    '   `<ID>` e a chave: o numero do chamado, da request, o que for.',
+    '   Nao existe? Crie a partir de `chamados/_TEMPLATE.md`.',
+    '3. **Leia `docs/README.md`** — indice do que vale para TODOS os chamados deste',
+    '   cliente (padroes, integracao, processo, armadilhas). Abra de `docs/` so os',
+    '   arquivos que o assunto pedir; nao leia a pasta inteira. Indice vazio e o',
+    '   normal de cliente novo, nao erro: va preenchendo conforme aprender.',
+    '4. **Registre o que aprendeu no lugar certo, na hora em que descobrir** — nao',
+    '   no fim da sessao, quando o contexto esta cheio e tudo empurra pra fechar.',
+    '',
+    'Cinco sinais de que o que voce acabou de descobrir e do **CLIENTE** e vai para',
+    '`docs/` (nao no HANDOFF). Sao observaveis: nao julgue a categoria, veja o sinal.',
+    '',
+    '1. **Reusou em vez de criar** — objeto Z que ja existia e voce so chamou.',
+    '2. **Ia criar e nao criou** — uma decisao sua foi revertida por uma descoberta.',
+    '3. **A resposta nao estava na spec** — veio do sistema, de um documento do',
+    '   cliente, de uma conversa, ou voce teve que perguntar ao usuario.',
+    '4. **Contrariou o padrao SAP ou o seu default** — alguem aqui decidiu diferente,',
+    '   e isso nao se deduz.',
+    '5. **Custou uma ida e volta** — autorizacao que sempre falta, lock que nao',
+    '   funciona, transporte que precisa de aprovacao.',
+    '',
+    'Escreva num arquivo de `docs/` e cite no indice `docs/README.md`. Na duvida,',
+    'pergunte em vez de escolher sozinho.',
+    '',
+    'Nao disparou nenhum? E do chamado: vai no HANDOFF.',
+    '',
+    '**Cliente novo (indice vazio):** voce nao tem baseline, entao o sinal 3 vale',
+    'quase sempre — tudo que precisar perguntar sobre ambiente, padrao ou processo e',
+    'do cliente. E antes de encerrar a primeira sessao, faca a colheita: pergunte ao',
+    'usuario as quatro secoes do `docs/README.md` em vez de torcer para ter',
+    'acumulado sozinho.',
+    '',
+    '## Workspace ainda nao organizado',
+    '',
+    'Se `docs/README.md` tiver a linha `Nao propor organizacao de frentes`, pule esta',
+    'secao inteira — o usuario ja disse que nao quer.',
+    '',
+    'Este workspace pode ser anterior a esta estrutura. Se `chamados/` so tem o',
+    '`_TEMPLATE.md`, gaste UM `ls` na raiz e em `docs/` antes de comecar: `.md` solto',
+    'na raiz e contexto de trabalho anterior, e a chave da frente costuma estar no',
+    'proprio nome (`GAP276-defeito-preco.md` → frente `GAP276`).',
+    '',
+    'Achou algo? **Antes de mover qualquer coisa:**',
+    '',
+    '1. Diga o que achou e proponha o mapeamento, arquivo por arquivo.',
+    '2. **Explique o ganho em uma linha** — cada frente passa a ter um HANDOFF, e a',
+    '   proxima sessao comeca sabendo onde parou em vez de comecar do zero. Quem so',
+    '   instalou uma atualizacao nao participou de nenhuma decisao sobre isto.',
+    '3. Peca o aval. Nao adivinhe: dois arquivos com o mesmo numero podem ser uma',
+    '   frente ou duas, e so o usuario sabe.',
+    '',
+    'A resposta define ate quando insistir:',
+    '',
+    '- **"agora nao"** — e sobre agora. Nao insista nesta sessao, mas **proponha de',
+    '  novo no proximo chat**, enquanto o workspace seguir sem estrutura.',
+    '- **"nao me pergunte mais isso"** — e definitivo. Escreva no topo do',
+    '  `docs/README.md` a linha `> Nao propor organizacao de frentes neste',
+    '  workspace.` e nunca mais proponha. Voce ja le esse arquivo no passo 3, entao',
+    '  a marca nao custa leitura extra.',
+    '',
+    'Subpasta com codigo de projeto nao e contexto e fica onde esta.',
+    '',
+    '## Skills: olhe a lista antes de escrever',
+    '',
+    'A lista de skills disponiveis chega em toda sessao. Antes de escrever ou',
+    'alterar algo, passe o olho nela e veja se ha uma do dominio em questao — ABAP,',
+    'CDS, CPI/iFlow, formulario Adobe, Fiori/UI5, CAP costumam ter.',
+    '',
+    'Achou uma que encaixa? **Diga qual e pergunte se deve carregar** em vez de',
+    'decidir sozinho. Uma vez por dominio por sessao: se o usuario disser sim, siga',
+    'usando naquele assunto sem perguntar de novo.',
+    '',
+    'Use o nome exato da lista da sessao — ela e a fonte da verdade. Nao decore uma',
+    'tabela: skill instalada ou removida faria este arquivo mentir.',
+    '',
+    'So vale para **escrever ou alterar**. Ler um objeto ou responder uma duvida',
+    'rapida nao justifica o custo.',
+    '',
+    '*(Skills sao do Claude Code. No Codex esta secao nao se aplica — o resto do',
+    'protocolo vale igual.)*',
+    '',
+    '## Antes de criar QUALQUER objeto',
+    '',
+    'Vale para classe, programa, tabela, include, pacote, CDS, grupo de funcoes —',
+    'qualquer coisa que va pro sistema. Nome, prefixo ou pacote errado so aparece',
+    'depois de criado, e ai ja existe transporte no meio.',
+    '',
+    '1. Confirme que **ja nao existe** (`SearchObject`). Reusar e o caminho normal;',
+    '   criar e a excecao.',
+    '2. **Leia o padrao de desenvolvimento do cliente em `docs/`** — nomenclatura,',
+    '   prefixo, pacote, camada. "Vou criar um objeto" E a demanda que justifica',
+    '   abrir esses arquivos: nao invente nome sem ter olhado.',
+    '3. `docs/` nao diz nada sobre nomenclatura? **Pergunte ao usuario se existe',
+    '   workbook / padrao de desenvolvimento do cliente** antes de nomear qualquer',
+    '   coisa. A resposta dele e do CLIENTE (sinal 3): grave em `docs/` na hora.',
+    '4. Peca o aval do usuario dizendo **o tipo e o nome** — "classe `ZCL_X`",',
+    '   "tabela `ZT_Y`", nunca so o nome solto.',
+    '',
+    '| Arquivo | Dono |',
+    '|---|---|',
+    '| `CLAUDE.md`, `AGENTS.md` | Cockpit. **Nao edite**: sao sobrescritos sem aviso |',
+    '| `docs/` | conhecimento do cliente. O Cockpit semeia o README e nunca sobrescreve |',
+    '| `chamados/<ID>/HANDOFF.md` | estado de um chamado |',
+    '| `.env`, `.vsp.json`, `cookies*.txt` | segredo. Nunca leia, nunca versione |',
+    '',
+    'Vasculhar a pasta gasta token a toa: fique em `docs/` e `chamados/<ID>/`. Nao',
+    'rode `glob`/`ls` recursivo na raiz.',
+    ''
+  ].join('\n');
+}
+
+// Semente do docs/README.md: o indice do conhecimento do cliente.
+//
+// As secoes vem nomeadas e vazias de proposito. "Escreva em docs/" sozinho e vago
+// demais -- com as secoes prontas, quem descobre uma armadilha do ambiente sabe
+// onde encaixar. Sem texto de exemplo: exemplo tende a ficar la para sempre e
+// virar ruido que o agente le em toda sessao.
+function docsReadmeSeed(nome) {
+  return [
+    '# ' + nome + ' — conhecimento do cliente',
+    '',
+    'O que vale para **todos** os chamados deste cliente. O estado de cada chamado',
+    'fica em `chamados/<ID>/HANDOFF.md`, nao aqui.',
+    '',
+    'Esta pasta e sua: o Cockpit semeia este README uma vez e nunca mais encosta. O',
+    '`CLAUDE.md` da raiz e gerado e sobrescrito sem aviso — nao escreva nada la.',
+    '',
+    '| Arquivo | Do que trata |',
+    '|---|---|',
+    '| | |',
+    '',
+    '## Sistema e acesso',
+    '',
+    '<!-- Release, ECC ou S/4, on-prem ou cloud, o que costuma faltar de autorizacao. -->',
+    '',
+    '## Padroes do cliente',
+    '',
+    '<!-- Nomenclatura, pacote, camada, prefixo, como o transporte funciona aqui. -->',
+    '',
+    '## Armadilhas conhecidas',
+    '',
+    '<!-- O que ja custou tempo neste cliente e nao esta documentado em outro lugar. -->',
+    '',
+    '## Pessoas',
+    '',
+    '<!-- Funcional, Basis, PO: quem decide o que. -->',
+    ''
+  ].join('\n');
+}
+
+// Semente do HANDOFF. As quatro secoes respondem o que a proxima sessao precisa:
+// onde mexer, o que ja existe, por que esta assim, e o que falta. A secao de
+// decisoes e a que mais importa -- o resto da pra reconstruir olhando o sistema.
+function templateHandoff() {
+  return [
+    '# <ID> — <titulo da frente>',
+    '',
+    'Ultima atualizacao: **<dd.mm.aaaa>**',
+    '',
+    '## Ambiente',
+    '',
+    '| | |',
+    '|---|---|',
+    '| MCP de desenvolvimento | `<profile>` — client `<nnn>`, usuario `<USER>`, mode `<mode>` |',
+    '| MCP de leitura | `<profile>` |',
+    '| Request | `<TRANSPORTE>` |',
+    '| Pacote | `<PACOTE>` |',
+    '| Spec e anexos (Drive) | `<caminho da pasta do chamado no Drive>` |',
+    '',
+    '## O que o chamado pede',
+    '',
+    '<!-- Duas ou tres linhas: o que muda para o negocio. Nao o passo a passo. -->',
+    '',
+    '## O que ja esta no sistema',
+    '',
+    '| Objeto | Tipo | Situacao |',
+    '|---|---|---|',
+    '| | | |',
+    '',
+    '## Decisoes tomadas',
+    '',
+    '<!-- Cada uma com o PORQUE. E o unico conteudo que nao da pra reconstruir',
+    '     olhando o sistema depois. -->',
+    '',
+    '## Pendencias / proximo passo',
+    '',
+    '- [ ] ',
+    ''
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Geracao dos arquivos de apoio de um WORKSPACE (.vsp.json, CLAUDE.md,
 // AGENTS.md, .env, .gitignore). O server MCP nao esta aqui — ele e global.
 //
@@ -939,9 +1194,22 @@ function generateWorkspace(settings, folder, envs) {
   // ---- CLAUDE.md (Claude Code) + AGENTS.md (Codex) - mesmo conteudo ----
   // Um bloco por engine presente na pasta: as instrucoes sao cheias de
   // particularidade do cliente ADT, entao nao da pra ter um texto so.
-  const instructions = grupos.map(g => g.engine.instructions(g.envs)).join('\n---\n\n');
-  fs.writeFileSync(path.join(folder, 'CLAUDE.md'), instructions, 'utf8');
-  fs.writeFileSync(path.join(folder, 'AGENTS.md'), instructions, 'utf8');
+  // O protocolo de trabalho fecha o arquivo, depois dos blocos de engine: ele e
+  // do WORKSPACE (chamado, HANDOFF) e nao do cliente ADT, entao entra uma vez so.
+  const instructions = grupos.map(g => g.engine.instructions(g.envs))
+    .concat([protocoloChamados()])
+    .join('\n---\n\n');
+  writeIfChanged(path.join(folder, 'CLAUDE.md'), instructions);
+  writeIfChanged(path.join(folder, 'AGENTS.md'), instructions);
+
+  // ---- arquivos do USUARIO: semeados uma vez, nunca sobrescritos ----
+  // Sem eles nao ha onde guardar conhecimento que sobreviva a regeracao, e o
+  // usuario acaba editando o CLAUDE.md — que e apagado sem aviso. docs/ e do
+  // cliente, chamados/ e do chamado: um dono por pasta, sem sobreposicao.
+  const nomeCliente = (envs.find(e => e.client_name) || {}).client_name
+    || path.basename(folder);
+  ensureFile(path.join(folder, 'docs', 'README.md'), docsReadmeSeed(nomeCliente));
+  ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
@@ -960,17 +1228,22 @@ function generateWorkspace(settings, folder, envs) {
       for (const v of vars) envLines.push(`${v}=${e.password}`);
     }
   }
-  fs.writeFileSync(path.join(folder, '.env'), envLines.join('\n') + '\n', 'utf8');
+  writeIfChanged(path.join(folder, '.env'), envLines.join('\n') + '\n');
 
   // ---- .gitignore ----
-  fs.writeFileSync(path.join(folder, '.gitignore'), [
+  writeIfChanged(path.join(folder, '.gitignore'), [
     '# SAP MCP Cockpit - arquivos sensiveis / locais',
-    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt', ''
-  ].join('\n'), 'utf8');
+    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt',
+    '',
+    '# Gerados pelo Cockpit: deterministicos, a outra maquina reconstroi ao ligar',
+    '# o MCP. O que e SEU vai em docs/, que nunca e sobrescrito.',
+    'CLAUDE.md', 'AGENTS.md', ''
+  ].join('\n'));
 
   return {
     ok: true,
-    files: engineFiles.concat(['.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md']),
+    files: engineFiles.concat(['.env', '.gitignore', 'CLAUDE.md', 'AGENTS.md',
+      'docs/README.md']),
     count: envs.length
   };
 }
@@ -1094,8 +1367,45 @@ ipcMain.handle('update:install', () => {
   return { ok: true };
 });
 
+// Regera os arquivos de apoio de todo workspace ja configurado, ao abrir o app.
+//
+// Sem isto a estrutura nova so chega quando o usuario mexe no Cockpit — e quem ja
+// tem tudo configurado nao mexe. O app se atualiza sozinho (electron-updater), o
+// usuario abre um chat na pasta do cliente e le o CLAUDE.md da versao ANTIGA: sem
+// protocolo, sem docs/, sem chamados/. E o agente nao pode se salvar, porque a
+// instrucao que mandaria criar a estrutura esta justamente no arquivo que nao foi
+// regerado.
+//
+// Roda quieto: writeIfChanged nao toca em arquivo identico e ensureFile so cria o
+// que falta, entao na maioria das aberturas isto e um punhado de leituras e nada
+// mais. Falha de um workspace (pasta em rede fora do ar, permissao) nao pode
+// impedir o app de abrir.
+function healWorkspaces() {
+  try {
+    const settings = settingsAtuais();
+    const clients = readJson(CLIENTS_FILE, { environments: [] });
+    const envs = (clients.environments || []).map(e => {
+      const dir = (clients.folders || {})[e.client_name];
+      return dir ? Object.assign({}, e, { folder: dir }) : null;
+    }).filter(Boolean);
+
+    const pastas = [...new Set(envs.map(e => e.folder))];
+    for (const dir of pastas) {
+      try {
+        if (!fs.existsSync(dir)) continue;  // pasta sumiu: nao recria do nada
+        generateWorkspace(settings, dir, envs.filter(e => e.folder === dir));
+      } catch (e) {
+        console.error('healWorkspaces:', dir, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('healWorkspaces:', e.message);
+  }
+}
+
 app.whenReady().then(() => {
   ensureBridgeFiles(); // scripts do bridge RFC no userData (Python nao le de dentro do asar)
+  healWorkspaces();
   createWindow();
   initAutoUpdate();
   app.on('activate', () => {
@@ -1115,11 +1425,15 @@ app.on('window-all-closed', () => {
 // nao pode chamar app.getPath -- ele tambem roda fora do Electron, nos testes).
 // Sai de novo na gravacao, pra nao virar um caminho fixo no settings.json que
 // ficaria errado se o userData mudar de lugar.
-ipcMain.handle('settings:load', () => {
+// Extraida do handler porque o healWorkspaces precisa das settings no boot, antes
+// de existir janela pra pedir por IPC.
+function settingsAtuais() {
   return Object.assign({}, DEFAULT_SETTINGS, readJson(SETTINGS_FILE, {}), {
     arc1_home: path.join(DATA_DIR, 'engines', 'arc1')
   });
-});
+}
+
+ipcMain.handle('settings:load', () => settingsAtuais());
 
 ipcMain.handle('settings:save', (_evt, settings) => {
   const limpo = Object.assign({}, settings);
@@ -1135,6 +1449,107 @@ ipcMain.handle('clients:load', () => {
 ipcMain.handle('clients:save', (_evt, clients) => {
   writeJson(CLIENTS_FILE, clients);
   return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// Levar as conexoes pra outra maquina.
+//
+// O clients.json NAO pode ser copiado direto: ele guarda senha em texto puro e
+// caminho absoluto de pasta. O export tira as duas coisas -- o arquivo resultante
+// pode ir por Drive, e-mail ou pendrive sem virar um vazamento.
+//
+// Senha nao viaja de proposito. O custo e baixo: conexao Cloud reloga por SSO na
+// maquina nova de qualquer jeito (o cookie e por maquina), entao so sobra
+// redigitar as on-premise, uma vez.
+// ---------------------------------------------------------------------------
+const EXPORT_FORMATO = 'sap-mcp-cockpit/conexoes';
+
+ipcMain.handle('conns:export', async () => {
+  const clients = readJson(CLIENTS_FILE, { environments: [] });
+  const envs = clients.environments || [];
+  if (!envs.length) return { ok: false, key: 'be.exportEmpty' };
+
+  // A pasta vira so o NOME dela. Na outra maquina a raiz pode ser outra, e o
+  // import remonta <raiz>/<nome>. Caminho absoluto daqui nao serve la.
+  const pastas = {};
+  for (const [cliente, dir] of Object.entries(clients.folders || {})) {
+    if (dir) pastas[cliente] = path.basename(dir);
+  }
+
+  let comSenha = 0;
+  const limpas = envs.map(e => {
+    const copia = Object.assign({}, e);
+    if (copia.password) comSenha++;
+    delete copia.password;
+    delete copia.folder;
+    return copia;
+  });
+
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exportar conexoes',
+    defaultPath: 'conexoes-cockpit.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (res.canceled || !res.filePath) return { ok: false, key: 'be.exportCanceled' };
+
+  writeJson(res.filePath, {
+    formato: EXPORT_FORMATO,
+    versao: 1,
+    exportadoEm: new Date().toISOString(),
+    aviso: 'Sem senhas: redigite as conexoes on-premise apos importar.',
+    folders: pastas,
+    environments: limpas
+  });
+  return { ok: true, key: 'be.exportOk', args: [limpas.length, comSenha], file: res.filePath };
+});
+
+ipcMain.handle('conns:import', async () => {
+  const escolha = await dialog.showOpenDialog(mainWindow, {
+    title: 'Importar conexoes',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (escolha.canceled || !escolha.filePaths.length) return { ok: false, key: 'be.importCanceled' };
+
+  let pacote;
+  try {
+    pacote = JSON.parse(fs.readFileSync(escolha.filePaths[0], 'utf8'));
+  } catch (e) {
+    return { ok: false, key: 'be.importBadJson', args: [e.message] };
+  }
+  if (!pacote || pacote.formato !== EXPORT_FORMATO || !Array.isArray(pacote.environments)) {
+    return { ok: false, key: 'be.importBadFile' };
+  }
+
+  const raiz = await dialog.showOpenDialog(mainWindow, {
+    title: 'Raiz dos workspaces (as pastas dos clientes ficam dentro dela)',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (raiz.canceled || !raiz.filePaths.length) return { ok: false, key: 'be.importCanceled' };
+  const base = raiz.filePaths[0].replace(/\\/g, '/');
+
+  const clients = readJson(CLIENTS_FILE, { environments: [] });
+  if (!Array.isArray(clients.environments)) clients.environments = [];
+  if (!clients.folders) clients.folders = {};
+
+  // Conexao que ja existe aqui NAO e tocada: ela tem senha, e o pacote nao. Um
+  // "update" apagaria a senha de quem ja estava configurado.
+  const jaTem = new Set(clients.environments.map(envIdOf));
+  let novas = 0, existentes = 0, pedemSenha = 0;
+  for (const e of pacote.environments) {
+    if (jaTem.has(envIdOf(e))) { existentes++; continue; }
+    clients.environments.push(e);
+    jaTem.add(envIdOf(e));
+    novas++;
+    if (e.auth_type !== 'cloud') pedemSenha++;
+  }
+
+  for (const [cliente, nome] of Object.entries(pacote.folders || {})) {
+    if (!clients.folders[cliente]) clients.folders[cliente] = base + '/' + nome;
+  }
+
+  writeJson(CLIENTS_FILE, clients);
+  return { ok: true, key: 'be.importOk', args: [novas, existentes, pedemSenha] };
 });
 
 ipcMain.handle('dialog:pickFile', async (_evt, opts) => {

@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('api', {
   // clients / environments
   loadClients: ()          => ipcRenderer.invoke('clients:load'),
   saveClients: (c)         => ipcRenderer.invoke('clients:save', c),
+  // levar conexoes pra outra maquina: o JSON sai SEM senha e sem caminho
+  // absoluto, entao pode trafegar por Drive/e-mail sem virar vazamento
+  connsExport: ()          => ipcRenderer.invoke('conns:export'),
+  connsImport: ()          => ipcRenderer.invoke('conns:import'),
 
   // dialogs
   pickFile: (opts)         => ipcRenderer.invoke('dialog:pickFile', opts),

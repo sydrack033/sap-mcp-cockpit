@@ -1352,6 +1352,31 @@ async function switchEngine(idx, escolha) {
   await refreshMcpStatus();
 }
 
+// Exporta as conexoes num JSON sem senha, pra levar pra outra maquina.
+async function doConnsExport(btn) {
+  if (btn) btn.disabled = true;
+  const res = await window.api.connsExport();
+  if (btn) btn.disabled = false;
+  // cancelar no dialogo nao e erro: nao pinta de vermelho por isso
+  if (res && res.key === 'be.exportCanceled') return;
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+}
+
+// Importa o JSON e remonta as pastas sob a raiz escolhida. Conexao que ja existe
+// aqui e preservada: ela tem senha, o pacote nao.
+async function doConnsImport(btn) {
+  if (btn) btn.disabled = true;
+  const res = await window.api.connsImport();
+  if (btn) btn.disabled = false;
+  if (res && res.key === 'be.importCanceled') return;
+  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res), res.ok ? 'ok' : 'err');
+  if (res && res.ok) {
+    clients = await window.api.loadClients();
+    render();
+    await refreshMcpStatus();
+  }
+}
+
 // Varredura: regrava a config de TODAS as conexoes ja registradas.
 // E o par do seletor de engine padrao — trocar o padrao so muda o que sera
 // gerado dali pra frente; isto alcanca o que ja estava no ~/.claude.json.
@@ -1562,6 +1587,8 @@ function bind() {
   $('btn-save-settings').onclick = saveSettings;
   $('btn-diagnose').onclick = function () { doDiagnose(this); };
   $('btn-resync').onclick = function () { doResyncAll(this); };
+  $('btn-conns-export').onclick = function () { doConnsExport(this); };
+  $('btn-conns-import').onclick = function () { doConnsImport(this); };
   $('btn-arc1-install').onclick = function () { doArc1Install(this); };
   $('btn-arc1-check').onclick   = function () { doArc1CheckLatest(this); };
   // o npm baixa ~83 MB: sem eco, o botao ficaria mudo por um minuto

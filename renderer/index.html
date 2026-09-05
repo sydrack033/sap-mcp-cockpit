@@ -158,6 +158,16 @@
             </div>
 
             <hr />
+            <h3 class="sub-title" data-i18n="settings.conns.title">Connections on another machine</h3>
+            <p class="hint" data-i18n-html="settings.conns.hint">The export leaves out <b>passwords</b> and absolute paths, so the file is safe to move around. On the new machine, import it and pick the workspaces root — the client folders are rebuilt under it.</p>
+            <div class="row">
+              <button id="btn-conns-export" class="btn btn-sm" data-i18n="settings.conns.export"
+                data-i18n-title="settings.conns.export.title">Export connections…</button>
+              <button id="btn-conns-import" class="btn btn-sm" data-i18n="settings.conns.import"
+                data-i18n-title="settings.conns.import.title">Import connections…</button>
+            </div>
+
+            <hr />
             <h3 class="sub-title" data-i18n="settings.bridge.title">SAProuter connections (RFC bridge)</h3>
             <p class="hint" data-i18n-html="settings.bridge.hint">Only for connections of type <b>SAProuter (RFC)</b>. The app ships its own Python + <code>pyrfc</code>, so there is nothing to install. What it cannot ship is the <b>SAP NW RFC SDK</b> (<code>sapnwrfc.dll</code>) — SAP does not allow redistributing it. It normally comes with SAP GUI already.</p>
             <div class="grid2">
