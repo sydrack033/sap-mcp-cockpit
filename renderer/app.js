@@ -1316,6 +1316,7 @@ async function switchEngine(idx, escolha) {
   if ((env.engine || '') === (escolha || '')) return; // ja e esse: nao faz nada
 
   const antes = engineIdOf(env);
+  const cruAntes = env.engine;   // valor CRU (undefined = herdava o padrao)
   if (escolha) env.engine = escolha; else delete env.engine;
   await persistClients();
   const depois = engineIdOf(env);
@@ -1330,10 +1331,24 @@ async function switchEngine(idx, escolha) {
   const dir = await ensureFolder(env.client_name);
   if (!dir) { setStatus(t('msg.folderNeeded', env.client_name), 'warn'); render(); return; }
   const res = await regenerateGlobal(env, dir);
+
+  // A config foi RECUSADA (ex.: ARC-1 sem Node). Manter a escolha nova no
+  // clients.json deixaria a tela dizendo um engine e o host subindo outro --
+  // exatamente a divergencia silenciosa que o resto desta funcao evita. Volta
+  // a escolha anterior pra tela e arquivo continuarem contando a mesma historia.
+  if (!res.ok) {
+    if (cruAntes === undefined) delete env.engine; else env.engine = cruAntes;
+    await persistClients();
+    setStatus('✗ ' + msgOf(res), 'err');
+    render();
+    await refreshMcpStatus();
+    return;
+  }
+
   // Trocar o COMANDO nao basta derrubar o processo: o host guarda a linha de
   // comando antiga e respawnaria o engine velho. Aqui o restart e obrigatorio.
-  const nota = (antes !== depois && res.ok) ? ' — ' + t('msg.engineRestart') : '';
-  setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res) + nota, res.ok ? 'ok' : 'err');
+  const nota = (antes !== depois) ? ' — ' + t('msg.engineRestart') : '';
+  setStatus('✓ ' + msgOf(res) + killedNote(res) + nota, 'ok');
   await refreshMcpStatus();
 }
 
@@ -1359,6 +1374,12 @@ async function doResyncAll(btn) {
   }
   if (res.ok && res.skipped && res.skipped.length) {
     extra += ' — ' + t('msg.resyncSkipped', res.skipped.join(', '));
+  }
+  // Fora da varredura por nao ter como rodar. Vai com o MOTIVO de cada uma:
+  // so a lista de nomes deixaria o usuario adivinhando o que faltou instalar.
+  if (res.ok && res.blocked && res.blocked.length) {
+    extra += ' — ' + t('msg.resyncBlocked',
+      res.blocked.map(b => b.id + ' (' + msgOf(b) + ')').join('; '));
   }
   setStatus((res.ok ? '✓ ' : '✗ ') + msgOf(res) + killedNote(res) + extra, res.ok ? 'ok' : 'err');
   if (btn) { btn.disabled = false; btn.textContent = label || t('settings.resync'); }

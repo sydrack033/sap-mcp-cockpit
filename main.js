@@ -597,9 +597,23 @@ ipcMain.handle('configs:resyncAll', (_evt, payload) => {
     const podem = alvo.filter(e => !(e.auth_type === 'cloud' && !e.folder));
     if (!podem.length) return { ok: false, key: 'be.resyncNoFolder', args: [semPasta.join(', ')] };
 
+    // Engine sem como subir (ARC-1 sem Node, vsp sem binario): fica de fora.
+    // Sobrescrever a entrada dela seria trocar uma config que hoje funciona por
+    // uma que nao sobe -- a antiga fica intacta e o motivo vai no relatorio.
+    const bloqueadas = [];
+    const rodaveis = [];
+    for (const e of podem) {
+      const falta = engines.engineOf(settings, e).checkBin(settings);
+      if (falta) bloqueadas.push({ id: envIdOf(e), key: falta.key, args: falta.args });
+      else rodaveis.push(e);
+    }
+    if (!rodaveis.length) {
+      return { ok: false, key: 'be.resyncBlocked', args: [bloqueadas.map(b => b.id).join(', ')] };
+    }
+
     // Antes de sobrescrever: quem TROCA de engine. E o que interessa reportar.
     const trocaram = [];
-    for (const e of podem) {
+    for (const e of rodaveis) {
       const id = envIdOf(e);
       const antes = engines.engineOfEntry(servers[id]);
       const agora = engines.engineOf(settings, e);
@@ -607,12 +621,12 @@ ipcMain.handle('configs:resyncAll', (_evt, payload) => {
     }
 
     json.mcpServers = servers;
-    for (const e of podem) servers[envIdOf(e)] = buildMcpServerEntry(settings, e, e.folder);
+    for (const e of rodaveis) servers[envIdOf(e)] = buildMcpServerEntry(settings, e, e.folder);
     writeClaudeGlobal(json, r.raw);
 
     // Arquivos de apoio, uma vez por PASTA e com TODAS as conexoes dela (mesmo
     // as nao registradas): gravar so as do alvo apagaria as outras do .vsp.json.
-    const pastas = [...new Set(podem.map(e => e.folder).filter(Boolean))];
+    const pastas = [...new Set(rodaveis.map(e => e.folder).filter(Boolean))];
     for (const dir of pastas) {
       const daPasta = todas.filter(x => x.folder === dir);
       generateWorkspace(settings, dir, daPasta);
@@ -621,7 +635,7 @@ ipcMain.handle('configs:resyncAll', (_evt, payload) => {
 
     // Codex le MCP so do config global dele: acompanha na mesma varredura.
     let codexFile = null;
-    try { codexFile = mergeCodexGlobalConfig(settings, podem); } catch (e) { /* segue */ }
+    try { codexFile = mergeCodexGlobalConfig(settings, rodaveis); } catch (e) { /* segue */ }
 
     // Uma vez so, no fim: o processo velho de QUALQUER engine segura a config
     // antiga em memoria, e o bridge antigo segura a porta com o ashost velho.
@@ -631,10 +645,11 @@ ipcMain.handle('configs:resyncAll', (_evt, payload) => {
     return {
       ok: true,
       key: 'be.resyncOk',
-      args: [podem.length],
-      count: podem.length,
+      args: [rodaveis.length],
+      count: rodaveis.length,
       switched: trocaram,
       skipped: semPasta,
+      blocked: bloqueadas,
       codexFile,
       vspKilled: mortos.killed,
       bridgeKilled: bridge.killed
@@ -652,6 +667,14 @@ ipcMain.handle('configs:generateGlobal', (_evt, payload) => {
     const { settings, env, envs } = payload || {};
     if (!env) return { ok: false, key: 'be.globalNoEnv' };
     if (env.auth_type === 'cloud' && !env.folder) return { ok: false, key: 'be.noFolderForConn' };
+
+    // Registrar um server que NAO tem como subir e pior do que recusar aqui: o
+    // host MCP falha longe daqui, em silencio, sem dizer o que falta -- no
+    // ARC-1 sem Node, nem `npx` existe. Recusa com o motivo enquanto o usuario
+    // ainda esta na tela que causou isso. Quem sabe o que o engine precisa e o
+    // proprio engine (checkBin), entao nao ha `if (engine === 'arc1')` aqui.
+    const semBin = engines.engineOf(settings, env).checkBin(settings);
+    if (semBin) return semBin;
 
     const id = envIdOf(env);
     const r = readClaudeGlobal();
