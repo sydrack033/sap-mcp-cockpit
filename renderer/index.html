@@ -158,6 +158,16 @@
             </div>
 
             <hr />
+            <h3 class="sub-title" data-i18n="settings.protocolo.title">Work protocol in the workspace</h3>
+            <p class="hint" data-i18n-html="settings.protocolo.hint">Adds a <code>docs/</code> and a <code>chamados/</code> folder to each workspace, plus a section in the generated <code>CLAUDE.md</code> telling the agent to keep a HANDOFF per ticket, read the client's standards before creating an object, and record what it learns. <b>Off by default</b> — it is one way of organizing, and the generated file is read by the agent on every session.</p>
+            <div class="field">
+              <label class="check">
+                <input id="set-protocolo" type="checkbox" />
+                <span data-i18n="settings.protocolo.label">Enable the work protocol</span>
+              </label>
+            </div>
+
+            <hr />
             <h3 class="sub-title" data-i18n="settings.conns.title">Connections on another machine</h3>
             <p class="hint" data-i18n-html="settings.conns.hint">The export leaves out <b>passwords</b> and absolute paths, so the file is safe to move around. On the new machine, import it and pick the workspaces root — the client folders are rebuilt under it.</p>
             <div class="row">

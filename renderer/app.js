@@ -241,6 +241,7 @@ function fillSettings() {
   $('set-node').value     = settings.node_path || '';
   $('set-chrome').value   = settings.chrome_path || '';
   $('set-vscode').value   = settings.vscode_cmd || 'code';
+  $('set-protocolo').checked = settings.protocolo_chamados === true;
   // vazio de proposito: vazio = usa o Python que vem junto no app
   $('set-python').value   = settings.python_path || '';
   $('set-nwrfc').value    = settings.nwrfc_lib || '';
@@ -255,6 +256,7 @@ function readSettingsFromForm() {
   settings.node_path    = $('set-node').value.trim();
   settings.chrome_path  = $('set-chrome').value.trim();
   settings.vscode_cmd   = $('set-vscode').value.trim() || 'code';
+  settings.protocolo_chamados = $('set-protocolo').checked;
   settings.python_path  = $('set-python').value.trim();
   settings.nwrfc_lib    = $('set-nwrfc').value.trim();
 }

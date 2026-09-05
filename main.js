@@ -56,6 +56,11 @@ const DEFAULT_SETTINGS = {
   nwrfc_lib: '',
   // Claude Code nao tem comando aqui: e o app desktop, aberto por claude://
   lang: 'en', // idioma da UI: 'en' (padrao) ou 'pt'
+  // Protocolo de trabalho no workspace (docs/ + chamados/ + o bloco no CLAUDE.md).
+  // DESLIGADO por padrao: e uma forma de organizar que nem todo mundo usa, e o
+  // arquivo gerado e lido pelo agente em toda sessao — quem nao adota nao deve
+  // pagar esse token. Com false, o workspace sai como antes da 2.4.0.
+  protocolo_chamados: false,
   // Engine padrao das conexoes que nao escolhem um (campo `engine` vazio).
   // 'vsp' mantem o comportamento de quem ja usava o app antes do seletor.
   default_engine: 'vsp',
@@ -1212,9 +1217,10 @@ function generateWorkspace(settings, folder, envs) {
 
   // O protocolo de trabalho fecha o arquivo, depois dos blocos de engine: ele e
   // do WORKSPACE (chamado, HANDOFF) e nao do cliente ADT, entao entra uma vez so.
-  const instructions = grupos.map(g => g.engine.instructions(g.envs))
-    .concat([protocoloChamados(nomeCliente)])
-    .join('\n---\n\n');
+  const comProtocolo = settings.protocolo_chamados === true;
+  const blocos = grupos.map(g => g.engine.instructions(g.envs, { protocolo: comProtocolo }));
+  if (comProtocolo) blocos.push(protocoloChamados(nomeCliente));
+  const instructions = blocos.join('\n---\n\n');
   writeIfChanged(path.join(folder, 'CLAUDE.md'), instructions);
   writeIfChanged(path.join(folder, 'AGENTS.md'), instructions);
 
@@ -1222,8 +1228,10 @@ function generateWorkspace(settings, folder, envs) {
   // Sem eles nao ha onde guardar conhecimento que sobreviva a regeracao, e o
   // usuario acaba editando o CLAUDE.md — que e apagado sem aviso. docs/ e do
   // cliente, chamados/ e do chamado: um dono por pasta, sem sobreposicao.
-  ensureFile(path.join(folder, 'docs', 'README.md'), docsReadmeSeed(nomeCliente));
-  ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
+  if (comProtocolo) {
+    ensureFile(path.join(folder, 'docs', 'README.md'), docsReadmeSeed(nomeCliente));
+    ensureFile(path.join(folder, 'chamados', '_TEMPLATE.md'), templateHandoff());
+  }
 
   // ---- .env (senhas on-premise) ----
   const envLines = [
@@ -1245,14 +1253,17 @@ function generateWorkspace(settings, folder, envs) {
   writeIfChanged(path.join(folder, '.env'), envLines.join('\n') + '\n');
 
   // ---- .gitignore ----
-  writeIfChanged(path.join(folder, '.gitignore'), [
+  const linhasGitignore = [
     '# SAP MCP Cockpit - arquivos sensiveis / locais',
-    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt',
-    '',
-    '# Gerados pelo Cockpit: deterministicos, a outra maquina reconstroi ao ligar',
-    '# o MCP. O que e SEU vai em docs/, que nunca e sobrescrito.',
-    'CLAUDE.md', 'AGENTS.md', ''
-  ].join('\n'));
+    '.env', '.vsp.json', '.mcp.json', '.codex/', 'codex.toml', 'cookies*.txt', ''
+  ];
+  if (comProtocolo) {
+    linhasGitignore.push(
+      '# Gerados pelo Cockpit: deterministicos, a outra maquina reconstroi ao ligar',
+      '# o MCP. O que e SEU vai em docs/, que nunca e sobrescrito.',
+      'CLAUDE.md', 'AGENTS.md', '');
+  }
+  writeIfChanged(path.join(folder, '.gitignore'), linhasGitignore.join('\n'));
 
   return {
     ok: true,
