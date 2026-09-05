@@ -1589,6 +1589,12 @@ function bind() {
   $('btn-save-settings').onclick = saveSettings;
   $('btn-diagnose').onclick = function () { doDiagnose(this); };
   $('btn-resync').onclick = function () { doResyncAll(this); };
+  // Mexer no checkbox so grava a preferencia: quem reescreve os workspaces e o
+  // boot do app (todos os clientes) ou o re-sync (so os registrados). Sem avisar,
+  // o usuario marca, nao ve nada mudar e conclui que esta quebrado.
+  $('set-protocolo').onchange = function () {
+    setStatus(t('msg.protocoloRestart'), 'warn');
+  };
   $('btn-conns-export').onclick = function () { doConnsExport(this); };
   $('btn-conns-import').onclick = function () { doConnsImport(this); };
   $('btn-arc1-install').onclick = function () { doArc1Install(this); };
