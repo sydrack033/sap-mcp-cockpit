@@ -231,6 +231,16 @@ zero e você reexplicar tudo.
 O mesmo vale pro `docs/`: o padrão do cliente é descoberto uma vez e reusado em
 todos os trabalhos seguintes.
 
+### Workbook e spec em `.docx` / `.pdf` viram `.md`
+
+Documento binário — workbook do cliente, spec do chamado, manual — não se lê
+direto: cada leitura gasta um script e um monte de token, e a sessão seguinte
+paga tudo de novo. Na primeira vez que o LLM abrir um, ele extrai o conteúdo
+para um `.md` ao lado (em `docs/` se valer pro cliente inteiro, em
+`chamados/<chave>/` se for de um trabalho só), com o caminho do original e a
+data no topo. Das próximas vezes ele lê só o `.md`. Mudou o original? Avise —
+ele extrai de novo.
+
 ### Já usava o Cockpit antes disso
 
 Suas pastas continuam como estavam — nada é movido. Se você tiver arquivos de
