@@ -20,6 +20,7 @@ const globalProfiles = new Set(); // profile ids registrados no ~/.claude.json
 const globalEngines = new Map();
 // [{ id, label, caps }] — vem do main; o renderer nao consegue ler lib/engines.
 let engineDefs = [];
+let appVersion = '';        // versao rodando; marca o release atual nos patch notes
 
 const $ = (id) => document.getElementById(id);
 const t = (...args) => window.i18n.t(...args);
@@ -37,6 +38,7 @@ async function changeLang(lang) {
   await window.api.saveSettings(settings);
   render();
   renderUpdate(); // a pilula de update e montada em JS, o data-i18n nao a alcanca
+  renderNews();   // idem: os itens vem de patchnotes.js, um por idioma
   if (!$('modal').classList.contains('hidden')) {
     $('modal-title').textContent = (editIndex >= 0) ? t('modal.edit') : t('modal.new');
     // o applyI18n repoe o rotulo pelo data-i18n ("Mostrar"), que fica errado se
@@ -363,9 +365,70 @@ function switchView(name) {
   });
   $('view-conns').classList.toggle('hidden', name !== 'conns');
   $('view-settings').classList.toggle('hidden', name !== 'settings');
+  $('view-news').classList.toggle('hidden', name !== 'news');
   // o estado do ARC-1 muda por fora do app (instalacao, node novo no PATH):
   // reconsulta ao abrir a tela em vez de confiar no que foi lido no boot
   if (name === 'settings') renderArc1Status();
+  if (name === 'news') renderNews();
+}
+
+// ---------------------------------------------------------------------------
+// Patch notes (aba Novidades)
+//
+// Montado em JS porque cada item tem um texto por idioma (patchnotes.js), e
+// data-i18n nao alcanca conteudo dinamico: changeLang chama esta funcao de novo.
+// textContent em tudo — nada aqui e HTML.
+// ---------------------------------------------------------------------------
+function fmtRelDate(iso) {
+  const p = String(iso || '').split('-');
+  if (p.length !== 3) return iso || '';
+  // pt le dd.mm.aaaa; en fica no ISO, que e o que o resto do mundo espera
+  return window.i18n.getLang() === 'pt' ? p[2] + '.' + p[1] + '.' + p[0] : iso;
+}
+
+function renderNews() {
+  const box = $('news-list');
+  if (!box) return;
+  const lang = window.i18n.getLang() === 'pt' ? 'pt' : 'en';
+  $('news-version').textContent = appVersion ? 'v' + appVersion : '—';
+  box.innerHTML = '';
+  for (const rel of (window.PATCH_NOTES || [])) {
+    const card = document.createElement('div');
+    card.className = 'rel' + (rel.v === appVersion ? ' current' : '');
+
+    const head = document.createElement('div');
+    head.className = 'rel-head';
+    const ver = document.createElement('span');
+    ver.className = 'rel-v';
+    ver.textContent = 'v' + rel.v;
+    const date = document.createElement('span');
+    date.className = 'rel-date';
+    date.textContent = fmtRelDate(rel.date);
+    head.append(ver, date);
+    // marca so o release que esta rodando: e a pergunta que o usuario faz
+    // ("o que eu ja tenho?"), e o resto da lista vira historico sem ambiguidade
+    if (rel.v === appVersion) {
+      const now = document.createElement('span');
+      now.className = 'pill';
+      now.textContent = t('news.current');
+      head.append(now);
+    }
+
+    const ul = document.createElement('ul');
+    ul.className = 'rel-items';
+    for (const it of (rel.items || [])) {
+      const li = document.createElement('li');
+      const tag = document.createElement('span');
+      tag.className = 'rel-tag ' + (it.t === 'fix' ? 'fix' : 'feat');
+      tag.textContent = t(it.t === 'fix' ? 'news.tag.fix' : 'news.tag.feat');
+      const txt = document.createElement('span');
+      txt.textContent = it[lang] || it.en || '';
+      li.append(tag, txt);
+      ul.append(li);
+    }
+    card.append(head, ul);
+    box.append(card);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,6 +1770,7 @@ async function initUpdates() {
     $('btn-update-install').onclick = () => window.api.updateInstall();
     const s = await window.api.updateState();
     const v = $('app-version');
+    appVersion = s.appVersion || '';
     v.textContent = 'v' + (s.appVersion || '?');
     v.title = t('update.checkNow');
     // clique na versao = checar agora (util quando o check do boot falhou)

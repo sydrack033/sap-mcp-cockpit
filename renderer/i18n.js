@@ -118,6 +118,12 @@ const I18N = {
 
     'nav.conns': 'Connections',
     'nav.settings': 'Settings',
+    'nav.news': "What's new",
+    'news.title': "What's new",
+    'news.hint': 'One section per release, newest first. The running version is marked.',
+    'news.current': 'installed',
+    'news.tag.feat': 'new',
+    'news.tag.fix': 'fix',
 
     'envs.title': 'Connections',
     'envs.new': '+ Connection',
@@ -455,6 +461,12 @@ const I18N = {
 
     'nav.conns': 'Conexões',
     'nav.settings': 'Configurações',
+    'nav.news': 'Novidades',
+    'news.title': 'Novidades',
+    'news.hint': 'Uma seção por versão, da mais nova para a mais antiga. A versão que você está rodando vem marcada.',
+    'news.current': 'instalada',
+    'news.tag.feat': 'novo',
+    'news.tag.fix': 'correção',
 
     'envs.title': 'Conexões',
     'envs.new': '+ Conexão',

@@ -18,6 +18,7 @@
     <nav class="nav">
       <button class="nav-item active" data-view="conns" data-i18n="nav.conns">Connections</button>
       <button class="nav-item" data-view="settings" data-i18n="nav.settings">Settings</button>
+      <button class="nav-item" data-view="news" data-i18n="nav.news">What&#39;s new</button>
     </nav>
     <div class="topbar-actions">
       <div class="lang-flags">
@@ -205,6 +206,20 @@
               <button id="btn-save-settings" class="btn btn-sm btn-primary"
                 data-i18n="settings.save" data-i18n-title="settings.save.title">Save settings</button>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View: patch notes. Os dados moram em patchnotes.js; aqui so a casca. -->
+      <section id="view-news" class="view hidden">
+        <div class="panel">
+          <div class="panel-head static">
+            <h2 data-i18n="news.title">What&#39;s new</h2>
+            <span id="news-version" class="pill"></span>
+          </div>
+          <div class="panel-body">
+            <p class="hint" data-i18n="news.hint">One section per release, newest first.</p>
+            <div id="news-list" class="news"></div>
           </div>
         </div>
       </section>
@@ -438,6 +453,7 @@
   </div>
 
   <script src="i18n.js"></script>
+  <script src="patchnotes.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -726,3 +726,60 @@ hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
   word-break: break-all;
 }
 .diag-hint { font-size: 11px; color: var(--amber); margin-top: 4px; line-height: 1.5; }
+
+/* ---------- Patch notes (aba Novidades) ----------
+   Um cartao por release, do mais novo pro mais antigo. O release INSTALADO
+   ganha a borda de acento: "o que eu ja tenho?" e a unica pergunta que se faz
+   nesta tela, e o resto da lista vira historico sem competir por atencao. */
+.news { display: flex; flex-direction: column; gap: 14px; }
+
+.rel {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 12px 14px;
+}
+.rel.current { border-left-color: var(--accent); }
+
+.rel-head { display: flex; align-items: baseline; gap: 10px; }
+.rel-v { font-size: 15px; font-weight: 700; color: var(--accent-soft); }
+.rel.current .rel-v { color: var(--accent-hi); }
+.rel-date {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: Consolas, monospace;
+}
+
+.rel-items {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rel-items li {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* etiqueta de tipo: largura fixa pra que o texto dos itens alinhe numa coluna so */
+.rel-tag {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  min-width: 66px;
+  text-align: center;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rel-tag.feat { color: var(--accent-hi); border-color: #2f6b45; background: #14251b; }
+.rel-tag.fix  { color: var(--amber);     border-color: #6b5424; background: #251f14; }
