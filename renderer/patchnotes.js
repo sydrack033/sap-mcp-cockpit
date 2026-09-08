@@ -23,6 +23,14 @@
 
 window.PATCH_NOTES = [
   {
+    v: '2.5.1', date: '2026-09-08',
+    items: [
+      { t: 'fix',
+        pt: 'O modo hyperfocused voltou a lista das conexoes vsp. O binario sempre aceitou os tres modos, mas quando o seletor de engine chegou a opcao sumiu da tela — e conexao que ja estava em hyperfocused caia pra focused sem avisar, na primeira vez que era salva.',
+        en: 'The hyperfocused mode is back in the list for vsp connections. The binary always accepted all three modes, but the option vanished from the screen when the engine selector arrived — and a connection already set to hyperfocused silently fell back to focused the first time it was saved.' }
+    ]
+  },
+  {
     v: '2.5.0', date: '2026-09-06',
     items: [
       { t: 'feat',
