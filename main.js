@@ -54,6 +54,12 @@ const DEFAULT_SETTINGS = {
   //   nwrfc_lib   vazio -> a sapnwrfc.dll ja esta na System32 (caso do SAP GUI)
   python_path: '',
   nwrfc_lib: '',
+  // Minutos SEM REQUEST NENHUM ate o bridge RFC se encerrar sozinho. Ele sobe
+  // destacado, pra sobreviver a sessao que o criou -- o que ate a 2.5.1 queria
+  // dizer "pra sempre": um processo por conexao RFC, vivo ate alguem matar, e
+  // prendendo os arquivos do runtime que o iniciou. O bridge_launch.py ja checa
+  // a porta antes de subir um, entao o de volta e sob demanda. 0 desliga.
+  bridge_idle_minutes: 30,
   // Claude Code nao tem comando aqui: e o app desktop, aberto por claude://
   lang: 'en', // idioma da UI: 'en' (padrao) ou 'pt'
   // Protocolo de trabalho no workspace (docs/ + chamados/ + o bloco no CLAUDE.md).
@@ -146,6 +152,16 @@ function resolvePython(settings) {
   return bundledPython() || 'python'; // embutido, ou o do PATH como ultimo recurso
 }
 
+// Quanto tempo ocioso o bridge aguenta antes de sair sozinho. Valor invalido
+// (texto, negativo) cai no padrao em vez de virar 0: 0 significa "nunca sai", e
+// e uma escolha que o usuario faz de proposito, nao por digitar errado.
+function idleMinutesOf(settings) {
+  const v = settings && settings.bridge_idle_minutes;
+  const n = Number(v);
+  if (v === 0 || v === '0') return 0;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SETTINGS.bridge_idle_minutes;
+}
+
 // Variaveis que o adt_rfc_bridge.py le (ele exige as obrigatorias no import e
 // sai com codigo 2 se faltar alguma).
 function bridgeEnvFor(settings, e) {
@@ -156,7 +172,8 @@ function bridgeEnvFor(settings, e) {
     RFC_SYSNR:     e.sysnr || '00',
     RFC_CLIENT:    e.sap_client || '100',
     RFC_USER:      e.user || '',
-    RFC_PASSWD:    e.password || ''
+    RFC_PASSWD:    e.password || '',
+    BRIDGE_IDLE_MINUTES: String(idleMinutesOf(settings))
   };
   // Sem router = acesso direto; o bridge so passa o parametro quando ele existe.
   if (e.saprouter) env.RFC_SAPROUTER = e.saprouter;

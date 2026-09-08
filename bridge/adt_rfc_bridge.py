@@ -42,6 +42,11 @@ Configuration (environment variables -- nothing is hard-coded)
   RFC_SAPROUTER  saprouter route string, e.g. "/H/router.example.com/S/3299"
                  (omit if the system is reachable directly over the network)
   BRIDGE_PORT    local TCP port the bridge listens on (default 8410)
+  BRIDGE_IDLE_MINUTES
+                 minutes with no request at all before the bridge shuts itself
+                 down (default 30; 0 disables it and the bridge runs forever).
+                 bridge_launch.py starts it again on demand, so in normal use
+                 this is invisible -- it only reclaims a bridge nobody is using.
 
 See `.env.example`. The bridge only connects to SAP on the *first* request
 (lazy connect), so an idle bridge performs no SAP logon.
@@ -58,6 +63,7 @@ import os
 import sys
 import threading
 import datetime
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pyrfc import Connection
@@ -108,6 +114,32 @@ PORT = int(os.environ.get("BRIDGE_PORT", "8410"))
 
 _conn = None
 _lock = threading.Lock()
+
+# --- idle shutdown ---------------------------------------------------------
+# The bridge is started DETACHED on purpose, so it outlives the launcher that
+# spawned it -- which until now also meant it outlived every reason to exist: a
+# process per RFC connection, alive until someone killed it, holding the files
+# of whatever runtime started it. With no request for BRIDGE_IDLE_MINUTES it now
+# exits by itself, and bridge_launch.py brings it back the next time a client
+# actually needs it (it already probes the port before starting one).
+def _idle_seconds():
+    try:
+        return max(0.0, float(os.environ.get("BRIDGE_IDLE_MINUTES", "30"))) * 60.0
+    except ValueError:
+        return 30 * 60.0
+
+
+IDLE_SECONDS = _idle_seconds()
+# Keepalive path. bridge_launch.py pings this for as long as the MCP session it
+# serves is alive, so "idle" means "no session left that could send a request",
+# not merely "quiet right now". It never reaches SAP: keeping a bridge warm must
+# not cost a logon (repeated logons are what locks a SAP user).
+PING_PATH = "/_bridge/ping"
+_last_seen = time.monotonic()
+_inflight = 0        # requests being served right now
+_locks_out = 0       # ADT object locks this bridge is holding open
+_state = threading.Lock()
+
 # Hop-by-hop / framing headers we must not copy from the FM response back to the
 # HTTP client -- the bridge sets its own Content-Length and closes the framing.
 _SKIP_RESP_HDR = {"content-length", "transfer-encoding", "connection", "keep-alive"}
@@ -178,6 +210,60 @@ def adt_call(method, uri, headers, body):
     return code, reason, out_headers, out_body
 
 
+def _touch():
+    global _last_seen
+    with _state:
+        _last_seen = time.monotonic()
+
+
+def _mark_busy():
+    global _inflight
+    with _state:
+        _inflight += 1
+
+
+def _mark_done(uri, code):
+    """Close out a request: refresh the idle clock and track open ADT locks."""
+    global _inflight, _last_seen, _locks_out
+    action = ""
+    if "_action=LOCK" in uri:
+        action = "lock"
+    elif "_action=UNLOCK" in uri:
+        action = "unlock"
+    with _state:
+        _inflight -= 1
+        _last_seen = time.monotonic()
+        # Timing out while an object is locked would drop the lock handle with
+        # it, and the write that follows would fail on a lock the client still
+        # believes it holds. Locks live in the RFC session, so the bridge stays
+        # up for as long as it is holding any.
+        if code is not None and code < 300:
+            if action == "lock":
+                _locks_out += 1
+            elif action == "unlock" and _locks_out > 0:
+                _locks_out -= 1
+
+
+def _idle_watchdog(srv):
+    """Shut the bridge down once it has been idle for IDLE_SECONDS."""
+    step = min(30.0, max(1.0, IDLE_SECONDS / 10.0))
+    while True:
+        time.sleep(step)
+        with _state:
+            quiet = time.monotonic() - _last_seen
+            busy = _inflight > 0 or _locks_out > 0
+        if busy or quiet < IDLE_SECONDS:
+            continue
+        log("idle for %.0fs -- shutting the bridge down" % quiet)
+        try:
+            if _conn is not None:
+                _conn.close()  # clean logoff instead of leaving the session behind
+        except Exception:
+            pass
+        srv.shutdown()  # must be called from a thread other than serve_forever()
+        return
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -185,6 +271,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _handle(self):
+        if self.path.startswith(PING_PATH):
+            _touch()
+            self.send_response(204, "No Content")
+            self.end_headers()
+            return
+        _mark_busy()
+        code = None
         try:
             n = int(self.headers.get("Content-Length", 0) or 0)
             body = self.rfile.read(n) if n else b""
@@ -205,6 +298,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(msg)
             sys.stderr.write(msg.decode("utf-8", "replace") + "\n")
             return
+        finally:
+            # runs on the error path too, which returns inside the except
+            _mark_done(self.path, code)
 
         self.send_response(code, reason)
         for k, v in out_headers:
@@ -238,6 +334,9 @@ def main():
         "ADT-RFC bridge listening on http://127.0.0.1:%d -> %s (sysnr %s, client %s) via %s"
         % (PORT, PARAMS["ashost"], PARAMS["sysnr"], PARAMS["client"], via)
     )
+    if IDLE_SECONDS > 0:
+        print("idle timeout: %g min without a request" % (IDLE_SECONDS / 60.0))
+        threading.Thread(target=_idle_watchdog, args=(srv,), daemon=True).start()
     srv.serve_forever()
 
 
