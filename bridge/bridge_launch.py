@@ -6,7 +6,10 @@ O host MCP (Claude Code / Codex) sobe ESTE script como comando do server. Ele:
   1. garante que o adt_rfc_bridge esta no ar em BRIDGE_PORT, subindo-o DESTACADO
      se ainda nao estiver (o bridge so loga no SAP na primeira chamada ADT, entao
      um bridge ocioso nao gasta logon nenhum);
-  2. entrega o controle ao vsp, REPASSANDO os argumentos recebidos -- e por isso
+  2. mantem esse bridge vivo com um ping periodico enquanto esta sessao existir
+     (ver keepalive) -- o bridge se encerra sozinho depois de BRIDGE_IDLE_MINUTES
+     sem sinal de vida, e sem o ping ele sumiria debaixo de uma sessao so quieta;
+  3. entrega o controle ao vsp, REPASSANDO os argumentos recebidos -- e por isso
      que este launcher existe em vez do vsp_launch.py original: as flags de
      conexao e de modo montadas pelo Cockpit (--url/--user/--mode/--read-only/...)
      precisam chegar no vsp.
@@ -26,7 +29,9 @@ import os
 import sys
 import socket
 import subprocess
+import threading
 import time
+import http.client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE_SCRIPT = os.environ.get("BRIDGE_SCRIPT", os.path.join(HERE, "adt_rfc_bridge.py"))
@@ -77,6 +82,39 @@ def start_bridge(port):
     return False
 
 
+def keepalive(port):
+    """Enquanto ESTE launcher viver, o bridge nao esta ocioso.
+
+    O timeout de ociosidade do bridge serve pra recolher bridge ORFAO -- o de uma
+    sessao que ja acabou. Sem este ping ele recolheria tambem o bridge de uma
+    sessao viva mas quieta (voce saiu pra almocar): a proxima chamada ADT bateria
+    em porta fechada e nao ha quem levante de novo, porque o launcher garante o
+    bridge no boot e depois ja entregou o stdio pro cliente.
+
+    O ping tem endpoint proprio, que NAO fala com o SAP: manter o bridge de pe
+    nao pode custar um logon -- logon repetido e o que bloqueia usuario no SAP.
+    """
+    try:
+        idle = float(os.environ.get("BRIDGE_IDLE_MINUTES", "30")) * 60.0
+    except ValueError:
+        idle = 30 * 60.0
+    if idle <= 0:
+        return                       # timeout desligado: nao ha o que segurar
+    # 1/3 do timeout da folga pra um ping se perder sem derrubar o bridge. O teto
+    # evita ping inutil num timeout enorme; o piso mantem um timeout curto
+    # (usado em teste) funcionando em vez de morrer antes do primeiro ping.
+    passo = min(600.0, max(1.0, idle / 3.0))
+    while True:
+        time.sleep(passo)
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", "/_bridge/ping")
+            c.getresponse().read()
+            c.close()
+        except OSError:
+            return                   # bridge morreu: quem sobe outro e o proximo launcher
+
+
 def main():
     port = int(os.environ.get("BRIDGE_PORT", "8410"))
 
@@ -88,6 +126,8 @@ def main():
             "SAP MCP Cockpit para checar os pre-requisitos.\n" % (port, STARTLOG)
         )
         return 3
+
+    threading.Thread(target=keepalive, args=(port,), daemon=True).start()
 
     try:
         return subprocess.call([ADT_CLIENT] + sys.argv[1:])
