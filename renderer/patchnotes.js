@@ -23,6 +23,14 @@
 
 window.PATCH_NOTES = [
   {
+    v: '2.5.2', date: '2026-09-08',
+    items: [
+      { t: 'fix',
+        pt: 'Conexao SAProuter (RFC) deixa de acumular processo em segundo plano: o bridge se encerra sozinho depois de 30 minutos sem uso e volta sozinho na proxima vez que voce precisar dele. Com uma sessao aberta ele fica de pe mesmo parada, e nunca sai enquanto estiver segurando lock de objeto.',
+        en: 'SAProuter (RFC) connections no longer pile up background processes: the bridge shuts itself down after 30 idle minutes and comes back on its own the next time you need it. It stays up while a session is open, even a quiet one, and never exits while it is holding an object lock.' }
+    ]
+  },
+  {
     v: '2.5.1', date: '2026-09-08',
     items: [
       { t: 'fix',
